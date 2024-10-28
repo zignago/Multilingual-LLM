@@ -1,22 +1,25 @@
 import os
-from datasets import Dataset, load_dataset
+import json
+import time
+from datasets import load_dataset
 from transformers import pipeline
 import openai
 import torch
 import re
 import argparse
 
-
-# TDOO:
-# - test other languages
-# - Write an english pipeline to run at the same time as translated pipeline to be compared (keep track of sample number for each response)
+# TODO features:
+# - Make it so that I can choose more than 1 language on any given run
 # - Separate functionality into different files
 # - Write evaluation functionality
-# - Write detailed testing for everything I can think of (mostly prompt engineering)
-# - Have some functionality to ensure translation is satisfactory
 # - Integrate other gpt models
 # - Integrate Llama models
 
+# TODO Testing:
+# - test output with other languages
+# - Write detailed testing for everything I can think of (mostly prompt engineering)
+# - Have some functionality to ensure translation is satisfactory
+# - Test consistency across runs
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -119,26 +122,49 @@ def get_keywords_from_llm_batch(prompts, LLM_model, limit):
         keywords_batch.append(keywords[:limit])
     return keywords_batch
 
-def main(language, limit, LLM_model):
+def main(language, limit, LLM_model, output_file=None):
     translator = get_translator(language)
     dataset = load_dataset("glue", "mnli", split="validation_matched").select(range(20))
     translated_dataset = translate_batch(dataset, translator)
 
+    # Generate prompts for the translated and English datasets
     translated_prompts = [generate_prompts(row, limit, language) for row in translated_dataset]
     english_prompts = [generate_prompts(row, limit, "english") for row in dataset]
 
+    # Get keywords from the LLM for both languages
     translated_keywords_batch = get_keywords_from_llm_batch(translated_prompts, LLM_model, limit)
     english_keywords_batch = get_keywords_from_llm_batch(english_prompts, LLM_model, limit)
 
-    for i, (translated_keywords, english_keywords) in enumerate(zip(translated_keywords_batch, english_keywords_batch), 1):
-        print(f"Sample {i} Keywords ({language.capitalize()}): {translated_keywords}")
-        print(f"Sample {i} Keywords (English): {english_keywords}\n")
+    # Structure the results for JSON output
+    output_data = []
+    for idx, (translated_keywords, english_keywords) in enumerate(zip(translated_keywords_batch, english_keywords_batch), 1):
+        output_data.append({
+            "idx": idx,
+            "english": english_keywords,
+            f"{language}": translated_keywords
+        })
+
+    # Set default output filename with timestamp if no custom filename is provided
+    if not output_file:
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        output_file = f"outputs/keywords_output_{timestamp}.json"
+    else:
+        output_file = f"outputs/{output_file}"
+
+    # Ensure the 'outputs' directory exists
+    os.makedirs("outputs", exist_ok=True)
+
+    # Write the output data to a JSON file
+    with open(output_file, "w", encoding="utf-8") as json_file:
+        json.dump(output_data, json_file, ensure_ascii=False, indent=4)
+    print(f"Results saved to {output_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multilingual LLM Keyword Extraction")
     parser.add_argument("--language", type=str, default="german", help="Specify the target language.")
     parser.add_argument("--limit", type=int, default=3, help="Limit to top n keywords.")
     parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help="Specify the GPT model.")
+    parser.add_argument("--output", type=str, help="Optional custom output filename (without path) for JSON results.")
     args = parser.parse_args()
     
-    main(args.language.lower(), args.limit, args.model)
+    main(args.language.lower(), args.limit, args.model, args.output)
