@@ -9,13 +9,13 @@ import re
 import argparse
 
 # TODO features:
-# - Make it so that I can choose more than 1 language on any given run
+# - Differentiate Chinese simplified vs traditional
 # - Separate functionality into different files
 # - Write evaluation functionality
-# - Integrate other gpt models
 # - Integrate Llama models
 
 # TODO Testing:
+# - raise errors for garbage inputs (invalid/unsupported language, invalid llm model, limit too large/small/negative)
 # - test output with other languages
 # - Write detailed testing for everything I can think of (mostly prompt engineering)
 # - Have some functionality to ensure translation is satisfactory
@@ -32,22 +32,19 @@ LABEL_MAP = {
 
 # Language-specific models dictionary
 TRANSLATION_MODELS = {
-    "spanish": "Helsinki-NLP/opus-mt-en-es",
-    "german": "Helsinki-NLP/opus-mt-en-de",
-    "french": "Helsinki-NLP/opus-mt-en-fr",
-    "italian": "Helsinki-NLP/opus-mt-en-it",
+    "spanish": "Helsinki-NLP/opus-mt-en-es", #
+    "german": "Helsinki-NLP/opus-mt-en-de", #
+    "french": "Helsinki-NLP/opus-mt-en-fr", #
+    "italian": "Helsinki-NLP/opus-mt-en-it", #
     "portuguese": "Helsinki-NLP/opus-mt-en-pt",
     "dutch": "Helsinki-NLP/opus-mt-en-nl",
     "russian": "Helsinki-NLP/opus-mt-en-ru",
-    "chinese": "Helsinki-NLP/opus-mt-en-zh",
-    "japanese": "Helsinki-NLP/opus-mt-en-jp",
-    "korean": "Helsinki-NLP/opus-mt-en-ko",
+    "chinese": "Helsinki-NLP/opus-mt-en-zh", #
     "arabic": "Helsinki-NLP/opus-mt-en-ar",
     "swedish": "Helsinki-NLP/opus-mt-en-sv",
     "norwegian": "Helsinki-NLP/opus-mt-en-no",
     "finnish": "Helsinki-NLP/opus-mt-en-fi",
     "danish": "Helsinki-NLP/opus-mt-en-da",
-    "polish": "Helsinki-NLP/opus-mt-en-pl",
     "turkish": "Helsinki-NLP/opus-mt-en-tr",
     "czech": "Helsinki-NLP/opus-mt-en-cs",
     "hungarian": "Helsinki-NLP/opus-mt-en-hu",
@@ -84,18 +81,12 @@ def translate_batch(dataset, translator):
     return dataset
 
 def generate_prompts(row, limit, language="english"):
-    if language == "english":
-        prompt_template = (
-            f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis.\n"
-            "Premise: {premise}\nHypothesis: {hypothesis}\nLabel: {label}\n\n"
-            'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
-        )
-    else:
-        prompt_template = (
-            f"Identify the top {limit} keywords relevant to understanding the relationship.\n"
-            "Premise: {premise}\nHypothesis: {hypothesis}\nLabel: {label}\n\n"
-            'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
-        )
+    prompt_template = (
+        f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis.\n"
+        "ONLY consider words between \'<<<\' and \'>>>\' as potential keywords.\n"
+        "Premise: <<<{premise}>>>\nHypothesis: <<<{hypothesis}>>>\nLabel: {label}\n\n"
+        'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
+    )
     return prompt_template.format(
         premise=row["translated_premise"] if language != "english" else row["premise"],
         hypothesis=row["translated_hypothesis"] if language != "english" else row["hypothesis"],
@@ -118,31 +109,45 @@ def get_keywords_from_llm_batch(prompts, LLM_model, limit):
         if not keywords:
             keywords = [word.strip() for word in response_text.strip("[]").split(",")]
         
-        # Truncate keywords to specified limit
-        keywords_batch.append(keywords[:limit])
+        keywords_batch.append(keywords[:limit])  # Enforce the limit
     return keywords_batch
 
-def main(language, limit, LLM_model, output_file=None):
-    translator = get_translator(language)
+def main(languages, limit, LLM_model, output_file=None):
     dataset = load_dataset("glue", "mnli", split="validation_matched").select(range(20))
-    translated_dataset = translate_batch(dataset, translator)
 
-    # Generate prompts for the translated and English datasets
-    translated_prompts = [generate_prompts(row, limit, language) for row in translated_dataset]
+    # Run the English pipeline first
     english_prompts = [generate_prompts(row, limit, "english") for row in dataset]
-
-    # Get keywords from the LLM for both languages
-    translated_keywords_batch = get_keywords_from_llm_batch(translated_prompts, LLM_model, limit)
     english_keywords_batch = get_keywords_from_llm_batch(english_prompts, LLM_model, limit)
 
-    # Structure the results for JSON output
-    output_data = []
-    for idx, (translated_keywords, english_keywords) in enumerate(zip(translated_keywords_batch, english_keywords_batch), 1):
-        output_data.append({
+    # Initialize output data structure with metadata
+    output_data = {
+        "metadata": {
+            "model": LLM_model,
+            "languages": languages,
+            "limit": limit
+        },
+        "results": []
+    }
+
+    # Populate results for each dataset item starting with English keywords
+    for idx, english_keywords in enumerate(english_keywords_batch, 1):
+        output_data["results"].append({
             "idx": idx,
-            "english": english_keywords,
-            f"{language}": translated_keywords
+            "english": english_keywords
         })
+
+    # Run the pipeline for each specified language
+    for language in languages:
+        translator = get_translator(language)
+        translated_dataset = translate_batch(dataset, translator)
+        
+        # Generate prompts and get keywords for each language
+        translated_prompts = [generate_prompts(row, limit, language) for row in translated_dataset]
+        translated_keywords_batch = get_keywords_from_llm_batch(translated_prompts, LLM_model, limit)
+
+        # Add translated keywords to output data
+        for idx, translated_keywords in enumerate(translated_keywords_batch):
+            output_data["results"][idx][language] = translated_keywords
 
     # Set default output filename with timestamp if no custom filename is provided
     if not output_file:
@@ -161,10 +166,10 @@ def main(language, limit, LLM_model, output_file=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multilingual LLM Keyword Extraction")
-    parser.add_argument("--language", type=str, default="german", help="Specify the target language.")
+    parser.add_argument("--languages", nargs="+", default=["german"], help="Specify one or more target languages.")
     parser.add_argument("--limit", type=int, default=3, help="Limit to top n keywords.")
-    parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help="Specify the GPT model.")
+    parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help="Specify the GPT model.\nDefault: gpt-3.5-turbo\nSupported models:https://platform.openai.com/docs/models")
     parser.add_argument("--output", type=str, help="Optional custom output filename (without path) for JSON results.")
     args = parser.parse_args()
     
-    main(args.language.lower(), args.limit, args.model, args.output)
+    main(args.languages, args.limit, args.model, args.output)
