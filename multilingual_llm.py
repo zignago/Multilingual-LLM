@@ -18,7 +18,6 @@ import argparse
 # - Integrate Llama models
 
 
-# Load OpenAI API key securely from environment variables
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Label mapping for translation
