@@ -68,11 +68,9 @@ def get_translator(language):
         model_name = TRANSLATION_MODELS[language]
     except KeyError:
         raise ValueError(f"Unsupported language '{language}'. Choose from: {', '.join(TRANSLATION_MODELS.keys())}")
-    
     return pipeline("translation", model=model_name, device=device, batch_size=8)
 
 def translate_batch(dataset, translator):
-    # Translate premises and hypotheses in batches directly within the dataset
     dataset = dataset.map(
         lambda examples: {
             "translated_premise": [item["translation_text"] for item in translator(examples["premise"])],
@@ -82,14 +80,26 @@ def translate_batch(dataset, translator):
     )
     return dataset
 
-def generate_prompts(row, translated_template):
-    return translated_template.format(
-        premise=row["translated_premise"],
-        hypothesis=row["translated_hypothesis"],
+def generate_prompts(row, limit, language="english"):
+    if language == "english":
+        prompt_template = (
+            f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis.\n"
+            "Premise: {premise}\nHypothesis: {hypothesis}\nLabel: {label}\n\n"
+            'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
+        )
+    else:
+        prompt_template = (
+            f"Identify the top {limit} keywords relevant to understanding the relationship.\n"
+            "Premise: {premise}\nHypothesis: {hypothesis}\nLabel: {label}\n\n"
+            'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
+        )
+    return prompt_template.format(
+        premise=row["translated_premise"] if language != "english" else row["premise"],
+        hypothesis=row["translated_hypothesis"] if language != "english" else row["hypothesis"],
         label=LABEL_MAP[row["label"]],
     )
 
-def get_keywords_from_llm_batch(prompts, LLM_model):
+def get_keywords_from_llm_batch(prompts, LLM_model, limit):
     keywords_batch = []
     for prompt in prompts:
         response = openai.chat.completions.create(
@@ -100,33 +110,33 @@ def get_keywords_from_llm_batch(prompts, LLM_model):
         )
         response_text = response.choices[0].message.content
         print(f"LLM Response: {response_text}")  # Debugging output
-        
+
         keywords = re.findall(r'"(.*?)"', response_text)
         if not keywords:
             keywords = [word.strip() for word in response_text.strip("[]").split(",")]
-        keywords_batch.append(keywords)
+        
+        # Truncate keywords to specified limit
+        keywords_batch.append(keywords[:limit])
     return keywords_batch
 
 def main(language, limit, LLM_model):
     translator = get_translator(language)
-    translated_template = (
-        f"Identify the top {limit} keywords relevant to understanding the relationship.\n"
-        "Premise: {premise}\nHypothesis: {hypothesis}\nLabel: {label}\n\n"
-        'Return keywords in array format like ["a", "b", "c"].'
-    )
-
     dataset = load_dataset("glue", "mnli", split="validation_matched").select(range(20))
-    dataset = translate_batch(dataset, translator)
+    translated_dataset = translate_batch(dataset, translator)
 
-    prompts = [generate_prompts(row, translated_template) for row in dataset]
-    keywords_batch = get_keywords_from_llm_batch(prompts, LLM_model)
+    translated_prompts = [generate_prompts(row, limit, language) for row in translated_dataset]
+    english_prompts = [generate_prompts(row, limit, "english") for row in dataset]
 
-    for i, keywords in enumerate(keywords_batch, 1):
-        print(f"Sample {i} Keywords: {keywords}")
+    translated_keywords_batch = get_keywords_from_llm_batch(translated_prompts, LLM_model, limit)
+    english_keywords_batch = get_keywords_from_llm_batch(english_prompts, LLM_model, limit)
+
+    for i, (translated_keywords, english_keywords) in enumerate(zip(translated_keywords_batch, english_keywords_batch), 1):
+        print(f"Sample {i} Keywords ({language.capitalize()}): {translated_keywords}")
+        print(f"Sample {i} Keywords (English): {english_keywords}\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multilingual LLM Keyword Extraction")
-    parser.add_argument("--language", type=str, default="spanish", help="Specify the target language.")
+    parser.add_argument("--language", type=str, default="german", help="Specify the target language.")
     parser.add_argument("--limit", type=int, default=3, help="Limit to top n keywords.")
     parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help="Specify the GPT model.")
     args = parser.parse_args()
