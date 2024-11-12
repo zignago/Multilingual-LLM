@@ -7,6 +7,8 @@ import openai
 import torch
 import re
 import argparse
+from deep_translator import GoogleTranslator
+from collections import Counter
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -54,43 +56,6 @@ def translate_batch(dataset, translator):
     )
     return dataset
 
-def generate_prompts(row, limit, language="english"):
-    # Define the base prompt template with placeholders for translation
-    prompt_template = (
-        f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis.\n"
-        "{{Premise}}: {premise}\n{{Hypothesis}}: {hypothesis}\n{{Label}}: {label}\n\n"
-        'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
-    )
-    
-    if language == "english":
-        # Return the prompt directly for English
-        return prompt_template.format(
-            premise=row["premise"],
-            hypothesis=row["hypothesis"],
-            label=LABEL_MAP[row["label"]],
-        )
-    
-    # For other languages, translate the template while protecting placeholders
-    # Step 1: Replace placeholders with curly brace tags ({{Premise}}, etc.)
-    formatted_prompt = prompt_template.format(
-        premise=row["translated_premise"],
-        hypothesis=row["translated_hypothesis"],
-        label=LABEL_MAP[row["label"]]
-    )
-
-    # Step 2: Translate the entire prompt with placeholders
-    translator = get_translator(language)
-    translated_prompt = translator(formatted_prompt)[0]['translation_text']
-    
-    # Step 3: Replace placeholders back to their original form after translation
-    translated_prompt = (
-        translated_prompt.replace("{{Premise}}", "Premise")
-                         .replace("{{Hypothesis}}", "Hypothesis")
-                         .replace("{{Label}}", "Label")
-    )
-
-    return translated_prompt
-
 def translate_static_prompt_parts(translator, limit):
     """Translates only the static instruction parts of the prompt for a given language."""
     # Define the static instruction template without dynamic content
@@ -129,35 +94,6 @@ def enforce_limit(keywords, limit, premise, hypothesis):
         # Add words until reaching the limit
         keywords.extend(extra_words[:limit - len(keywords)])
     return keywords[:limit]
-
-def get_keywords_from_llm_batch(prompts, LLM_model, limit, premise_hypothesis_pairs):
-    keywords_batch = []
-    for idx, prompt in enumerate(prompts):
-        response = openai.chat.completions.create(
-            model=LLM_model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=50,
-            temperature=0.0
-        )
-        response_text = response.choices[0].message.content
-        
-        # Extract keywords from the response text
-        keywords = re.findall(r'"(.*?)"', response_text)
-        if not keywords:
-            keywords = [word.strip() for word in response_text.strip("[]").split(",")]
-        
-        # Ensure the keywords are only from premise/hypothesis
-        premise, hypothesis = premise_hypothesis_pairs[idx]
-        filtered_keywords = filter_keywords(keywords, premise, hypothesis)
-        
-        # Enforce the limit to ensure we have exactly 'limit' keywords
-        limited_keywords = enforce_limit(filtered_keywords, limit, premise, hypothesis)
-        
-        keywords_batch.append(limited_keywords)
-    
-    return keywords_batch
-
-from collections import Counter
 
 def get_common_keywords(all_keywords, limit):
     """Selects the top 'limit' most common keywords from a list of keyword lists."""
@@ -204,12 +140,6 @@ def get_keywords_from_llm_multiple(prompts, LLM_model, limit, premise_hypothesis
     
     return keywords_batch
 
-def mark_keywords(keywords):
-    """Wraps each keyword with explicit markers for reverse translation."""
-    return [f"<<start>>{keyword}<<end>>" for keyword in keywords]
-
-from deep_translator import GoogleTranslator
-
 def reverse_translate_keywords_deeptranslator(keywords, source_language):
     """Translates keywords back to English using deep-translator's Google Translator."""
     # Get the correct language code for deep-translator
@@ -230,22 +160,6 @@ def reverse_translate_keywords_deeptranslator(keywords, source_language):
             print(f"Error translating '{keyword}': {e}")
             reverse_translated_keywords.append(keyword)
     
-    return reverse_translated_keywords
-
-def reverse_translate_keywords(keywords, translator):
-    """Translates keywords individually and maps them back to their English equivalents."""
-    reverse_translated_keywords = []
-    translation_dict = {}
-
-    # Translate each keyword individually and build a dictionary
-    for keyword in keywords:
-        translated_word = translator(keyword)[0]['translation_text'].strip()
-        translation_dict[translated_word] = keyword  # Map back to the original English keyword
-
-    # Map each translated word back to its original English keyword
-    for translated_word in translation_dict.keys():
-        reverse_translated_keywords.append(translation_dict[translated_word])
-
     return reverse_translated_keywords
 
 def get_keywords_with_reverse_translation(prompts, LLM_model, limit, premise_hypothesis_pairs, x, language_name):
