@@ -6,11 +6,16 @@ from transformers import pipeline
 import openai
 import torch
 import re
-import argparse
+import string
 from deep_translator import GoogleTranslator
 from collections import Counter
+from jaccard import compare_with_components
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+#TODO
+# Hardcode spanish se to "Know" for reverse translation
+# Hardcode to strip punctuation from keywords
 
 LABEL_MAP = {
     0: "Entailment",
@@ -30,6 +35,13 @@ LANGUAGE_CODES = {
     "spanish": "es",
     "german": "de",
     # Add other languages here as needed...
+}
+
+# For specific keywords that often get mistranslated
+HARDCODE_TRANSLATIONS = {
+    "sé": "know", #sé often gets reverse-translated as "HE"
+    "sé.": "know",
+    "sé,": "know"
 }
 
 device = 0 if torch.cuda.is_available() else -1
@@ -56,12 +68,28 @@ def translate_batch(dataset, translator):
     )
     return dataset
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def translate_static_prompt_parts(translator, limit):
     """Translates only the static instruction parts of the prompt for a given language."""
     # Define the static instruction template without dynamic content
     static_instruction = (
         f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis. "
-        "Only include words from the premise and hypothesis. Do not include any other words.\n"
+        "Only include words from the premise and hypothesis. Do not include any other words. Do not include punctuation or commas ('.' or ',') in keywords.\n"
         "Premise: [Premise]\nHypothesis: [Hypothesis]\nLabel: [Label]\n\n"
         'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
     )
@@ -80,10 +108,22 @@ def generate_prompts(row, translated_instruction, language="english"):
                                  .replace("[Hypothesis]", row["translated_hypothesis"] if language != "english" else row["hypothesis"])\
                                  .replace("[Label]", LABEL_MAP[row["label"]])
 
-def filter_keywords(keywords, premise, hypothesis):
-    """Filter out any keywords that are not in the premise or hypothesis."""
+def filter_keywords(keywords, premise, hypothesis, language="english"):
+    """
+    Filter out any keywords that are not in the premise or hypothesis.
+    Also accounts for multi-word translations and compound words.
+    """
     allowed_words = set(premise.split() + hypothesis.split())
-    return [word for word in keywords if word in allowed_words]
+    filtered_keywords = []
+
+    for keyword in keywords:
+        if keyword in allowed_words:
+            filtered_keywords.append(keyword)
+        elif compare_with_components(keyword, allowed_words, language):
+            filtered_keywords.append(keyword)
+
+    return filtered_keywords
+
 
 def enforce_limit(keywords, limit, premise, hypothesis):
     """Ensures that the keyword list meets the required limit by adding words from the premise or hypothesis if necessary."""
@@ -140,27 +180,38 @@ def get_keywords_from_llm_multiple(prompts, LLM_model, limit, premise_hypothesis
     
     return keywords_batch
 
+import unicodedata
+import string
+
+def clean_keyword(keyword):
+    """
+    Clean a keyword by removing punctuation, normalizing accents, and converting to lowercase.
+    """
+    keyword = unicodedata.normalize("NFKC", keyword)  # Normalize text
+    keyword = ''.join(char for char in keyword if char not in string.punctuation)  # Remove punctuation
+    return keyword.strip().lower()  # Strip whitespace and convert to lowercase
+
 def reverse_translate_keywords_deeptranslator(keywords, source_language):
     """Translates keywords back to English using deep-translator's Google Translator."""
-    # Get the correct language code for deep-translator
     source_code = LANGUAGE_CODES.get(source_language)
-    
     if not source_code:
         raise ValueError(f"Unsupported language '{source_language}'. Available languages: {list(LANGUAGE_CODES.keys())}")
 
     reverse_translated_keywords = []
-    
     for keyword in keywords:
         try:
-            # Translate each keyword back to English
-            translated_word = GoogleTranslator(source=source_code, target="en").translate(keyword)
-            reverse_translated_keywords.append(translated_word.strip())
+            if keyword in HARDCODE_TRANSLATIONS:
+                reverse_translated_keywords.append(HARDCODE_TRANSLATIONS[keyword])
+            else:
+                translated_word = GoogleTranslator(source=source_code, target="en").translate(keyword)
+                translated_word = clean_keyword(translated_word)
+                reverse_translated_keywords.extend(translated_word.split())  # Split multi-word translations
         except Exception as e:
-            # Handle translation errors, add original word if translation fails
             print(f"Error translating '{keyword}': {e}")
-            reverse_translated_keywords.append(keyword)
-    
-    return reverse_translated_keywords
+            reverse_translated_keywords.append(clean_keyword(keyword))
+
+    return list(set(reverse_translated_keywords))  # Deduplicate keywords
+
 
 def get_keywords_with_reverse_translation(prompts, LLM_model, limit, premise_hypothesis_pairs, x, language_name):
     """Runs the keyword extraction 'x' times for each prompt and returns the most common 'limit' keywords, along with reverse translation."""
@@ -180,10 +231,11 @@ def get_keywords_with_reverse_translation(prompts, LLM_model, limit, premise_hyp
             )
             response_text = response.choices[0].message.content
             
-            # Extract keywords and filter by premise/hypothesis words only
+            # Extract keywords and normalize
             keywords = re.findall(r'"(.*?)"', response_text)
             if not keywords:
                 keywords = [word.strip() for word in response_text.strip("[]").split(",")]
+            keywords = [clean_keyword(word) for word in keywords]  # Normalize keywords
             
             # Filter to only include words from the premise and hypothesis
             premise, hypothesis = premise_hypothesis_pairs[idx]
