@@ -12,4 +12,5 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, help="Optional custom output filename (without path) for JSON results.")
     args = parser.parse_args()
     
-    jaccard(main(args.languages, args.limit, args.model, args.subset, args.x, args.output))
+    #jaccard(main(args.languages, args.limit, args.model, args.subset, args.x, args.output))
+    jaccard("outputs/keywords_output_20241112-234949.json")
