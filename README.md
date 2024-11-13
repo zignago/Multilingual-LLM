@@ -1,5 +1,4 @@
 # Multilingual-LLM
 
-run tokenize_dataset.py to get the tokenized spanish json file
-
-Then run through json reformatting folder to get cleansed json output without padding
+sample run:\
+`python main.py --languages german spanish --limit 2 --model gpt-3.5-turbo --x 1`
