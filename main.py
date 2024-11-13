@@ -1,5 +1,6 @@
 import argparse
 from multilingual_llm import main
+from jaccard import jaccard
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multilingual LLM Keyword Extraction")
@@ -11,4 +12,4 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, help="Optional custom output filename (without path) for JSON results.")
     args = parser.parse_args()
     
-    main(args.languages, args.limit, args.model, args.subset, args.x, args.output)
+    jaccard(main(args.languages, args.limit, args.model, args.subset, args.x, args.output))
