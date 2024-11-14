@@ -6,7 +6,7 @@ from transformers import pipeline
 from deep_translator import GoogleTranslator
 import torch
 import openai
-from config import LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES
+from src.config import LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 

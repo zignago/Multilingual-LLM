@@ -1,6 +1,6 @@
 import argparse
-from multilingual_llm import main
-from iou_evaluation import jaccard
+from src.multilingual_llm import main
+from src.iou_evaluation import jaccard
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multilingual LLM Keyword Extraction")

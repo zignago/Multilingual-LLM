@@ -10,8 +10,8 @@ import string
 import unicodedata
 from deep_translator import GoogleTranslator
 from collections import Counter
-from iou_evaluation import compare_with_components
-from config import LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES, HARDCODE_TRANSLATIONS
+from src.iou_evaluation import compare_with_components
+from src.config import LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES, HARDCODE_TRANSLATIONS
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -284,14 +284,20 @@ def main(languages, limit, LLM_model, subset=20, repeats=5, output_file=None):
     # Set default output filename with timestamp if no custom filename is provided
     if not output_file:
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        output_file = f"outputs/keywords_output_{timestamp}.json"
+        output_file = f"keywords_output_{timestamp}.json"
     else:
-        output_file = f"outputs/{output_file}"
+        output_file = output_file
 
-    os.makedirs("outputs", exist_ok=True)
+    # Ensure the outputs directory is created in the project root
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../outputs")
+    os.makedirs(output_dir, exist_ok=True)
 
-    with open(output_file, "w", encoding="utf-8") as json_file:
+    # Construct the full path for the output file
+    output_file_path = os.path.join(output_dir, output_file)
+
+    # Write the JSON file
+    with open(output_file_path, "w", encoding="utf-8") as json_file:
         json.dump(output_data, json_file, ensure_ascii=False, indent=4)
-    print(f"Results saved to {output_file}")
+    print(f"Results saved to outputs/{output_file}")
 
-    return output_file
+    return output_file_path

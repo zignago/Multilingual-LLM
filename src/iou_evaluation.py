@@ -3,6 +3,7 @@
 import json
 import re
 import time
+import os
 import argparse
 from pathlib import Path
 from pathlib import Path
@@ -132,7 +133,6 @@ def save_iou_results(iou_scores, language_averages, overall_average_iou, output_
     }
     with open(output_path, "w", encoding="utf-8") as file:
         json.dump(results, file, ensure_ascii=False, indent=4)
-    print(f"IoU results saved to {output_path}")
 
 def jaccard(input_json_path):
     # Ensure input file exists
@@ -140,12 +140,21 @@ def jaccard(input_json_path):
         print(f"Input file {input_json_path} does not exist.")
         return
     
+    # Generate timestamp for the output filename
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_iou_path = f"outputs/iou_output_{timestamp}.json"
+    output_filename = f"iou_output_{timestamp}.json"
+
+    # Ensure the outputs directory is created in the project root
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../outputs")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Construct the full path for the output file
+    output_iou_path = os.path.join(output_dir, output_filename)
 
     # Compute IoU and save results
     iou_scores, language_averages, overall_average_iou = compute_iou_from_json_advanced(input_json_path, threshold=0.7)
     save_iou_results(iou_scores, language_averages, overall_average_iou, output_iou_path)
+    print(f"IoU results saved to outputs/{output_filename}")
 
     # Print per-language averages and overall average
     print("Per-Language IoU Averages:")
