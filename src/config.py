@@ -5,15 +5,20 @@ LABEL_MAP = {
 }
 
 LABEL_TRANSLATION = {
-    "italian": {
-        "Entailment": "Implicazione",
-        "Neutral": "Neutrale",
-        "Contradiction": "Contraddizione" 
+    "french": {
+        "Entailment": "Implication",
+        "Neutral": "Neutre",
+        "Contradiction": "Contradiction" 
     },
     "german": {
         "Entailment": "Erforderung",
         "Neutral": "Neutral",
         "Contradiction": "Widerspruch" 
+    },
+    "italian": {
+        "Entailment": "Implicazione",
+        "Neutral": "Neutrale",
+        "Contradiction": "Contraddizione" 
     },
     "spanish": {
         "Entailment": "Vinculación",
@@ -23,18 +28,20 @@ LABEL_TRANSLATION = {
 }
 
 TRANSLATION_MODELS = {
-    "spanish": "Helsinki-NLP/opus-mt-en-es",
+    "french": "Helsinki-NLP/opus-mt-en-fr",
     "german": "Helsinki-NLP/opus-mt-en-de",
-    "italian": "Helsinki-NLP/opus-mt-en-it"
+    "italian": "Helsinki-NLP/opus-mt-en-it",
+    "spanish": "Helsinki-NLP/opus-mt-en-es"
     # Add more languages as needed...
 }
 
 # Mapping language names to deep-translator codes
 LANGUAGE_CODES = {
     "english": "en",
-    "spanish": "es",
+    "french": "fr",
     "german": "de",
-    "italian": "it"
+    "italian": "it",
+    "spanish": "es"
     # Add other languages here as needed...
 }
 
@@ -44,15 +51,20 @@ PROMPT_COMPONENTS = {
         "Hypothesis": "Hypothesis",
         "Label": "Label"
     },
-    "italian": {
-        "Premise": "Premere",
-        "Hypothesis": "Ipotesi",
-        "Label": "Etichetta"
+    "french": {
+        "Premise": "Premise",
+        "Hypothesis": "Hypothèse",
+        "Label": "Étiquette"
     },
     "german": {
         "Premise": "Prämisse",
         "Hypothesis": "Hypothese",
         "Label": "Etikett"
+    },
+    "italian": {
+        "Premise": "Premere",
+        "Hypothesis": "Ipotesi",
+        "Label": "Etichetta"
     },
     "spanish": {
         "Premise": "Premisa",
@@ -61,7 +73,6 @@ PROMPT_COMPONENTS = {
     },
     # Add other languages as needed
 }
-
 
 # For specific keywords that often get mistranslated
 HARDCODE_TRANSLATIONS = {
