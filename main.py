@@ -13,6 +13,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     jaccard(main(args.languages, args.limit, args.model, args.subset, args.repeat, args.output))
-    
-    # Debugging IoU using a specific JSON output:
-    # jaccard("outputs/keywords_output_20241112-234949.json")

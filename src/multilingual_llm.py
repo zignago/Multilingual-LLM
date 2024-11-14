@@ -7,11 +7,12 @@ import openai
 import torch
 import re
 import string
+from datetime import datetime
 import unicodedata
 from deep_translator import GoogleTranslator
 from collections import Counter
 from src.iou_evaluation import compare_with_components
-from src.config import LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES, HARDCODE_TRANSLATIONS
+from src.config import LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES, HARDCODE_TRANSLATIONS, PROMPT_COMPONENTS, LABEL_TRANSLATION
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -43,29 +44,104 @@ def translate_batch(dataset, translator):
     )
     return dataset
 
-def translate_static_prompt_parts(translator, limit):
-    """Translates only the static instruction parts of the prompt for a given language."""
-    # Define the static instruction template without dynamic content
+# def translate_static_prompt_parts(translator, limit, language="english"):
+#     """
+#     Translates only the static instruction parts of the prompt for a given language.
+#     Uses hardcoded translations for premise, hypothesis, and label to avoid errors.
+#     """
+#     if language not in PROMPT_COMPONENTS:
+#         raise ValueError(f"Language '{language}' is not supported in PROMPT_COMPONENTS.")
+
+#     # Check all required keys exist
+#     for key in ["premise", "hypothesis", "label"]:
+#         if key not in PROMPT_COMPONENTS[language]:
+#             raise KeyError(f"Missing '{key}' in PROMPT_COMPONENTS for language '{language}'.")
+
+#     # Define the static instruction template
+#     static_instruction = (
+#         f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis. "
+#         "Include only words from the premise and hypothesis. Do not include any other words. "
+#         "Do not include punctuation or commas ('.' or ',') in keywords.\n"
+#         "Premise: [Premise]\nHypothesis: [Hypothesis]\nLabel: [Label]\n\n"
+#         'Return keywords in array format like ["a", "b", "c"]. Include only single words, no phrases.'
+#     )
+
+#     # Replace placeholders with translations
+#     static_instruction = static_instruction.replace("[Premise]", PROMPT_COMPONENTS[language]["premise"])
+#     static_instruction = static_instruction.replace("[Hypothesis]", PROMPT_COMPONENTS[language]["hypothesis"])
+#     static_instruction = static_instruction.replace("[Label]", PROMPT_COMPONENTS[language]["label"])
+
+#     # Translate the instruction if a translator is provided
+#     if translator:
+#         static_instruction = translator(static_instruction)[0]['translation_text']
+
+#     return static_instruction
+
+def translate_static_prompt_parts(translator, limit, language="english"):
+    """
+    Translates only the static instruction parts of the prompt for a given language.
+    Uses hardcoded translations for premise, hypothesis, and label to avoid errors.
+    """
+    # Define the static instruction template with placeholders
     static_instruction = (
         f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis. "
-        "Only include words from the premise and hypothesis. Do not include any other words. Do not include punctuation or commas ('.' or ',') in keywords.\n"
-        "Premise: [Premise]\nHypothesis: [Hypothesis]\nLabel: [Label]\n\n"
-        'Return keywords in array format like ["a", "b", "c"]. Only include single words, no phrases.'
+        "Include only words from the premise and hypothesis. Do not include any other words. "
+        "Do not include punctuation or commas ('.' or ',') in keywords.\n"
+        "Premise: [Premise]\nHypothesis: [Hypothesis]\nLabel: [Label].\n\n"
+        'Return keywords in array format like ["a", "b", "c"]. Include only single words, no phrases.'
     )
-    
-    # Translate the static instructions only
-    translated_instruction = translator(static_instruction)[0]['translation_text']
-    
-    # Return the translated instruction with placeholders in brackets
+
+    # Translate the static instruction using the translator
+    if translator:
+        translated_instruction = translator(static_instruction)[0]["translation_text"]
+    else:
+        translated_instruction = static_instruction
+
     return translated_instruction
 
-
+# Works for full prompt, just leaves parts untranslated
 def generate_prompts(row, translated_instruction, language="english"):
-    """Generates a single prompt by replacing placeholders with specific row data."""
+    """
+    Generates a single prompt by replacing placeholders with specific row data.
+    Ensures that premise, hypothesis, and label are correctly populated.
+    """
     # Replace placeholders with actual premise, hypothesis, and label
-    return translated_instruction.replace("[Premise]", row["translated_premise"] if language != "english" else row["premise"])\
-                                 .replace("[Hypothesis]", row["translated_hypothesis"] if language != "english" else row["hypothesis"])\
-                                 .replace("[Label]", LABEL_MAP[row["label"]])
+    premise = row["translated_premise"] if language != "english" else row["premise"]
+    hypothesis = row["translated_hypothesis"] if language != "english" else row["hypothesis"]
+
+    label = LABEL_MAP[row["label"]]
+    if language != "english":
+        label = LABEL_TRANSLATION[language][label]
+
+    # Output for debugging placeholders
+    # print(f"pre-replacement prompt: {translated_instruction}")
+
+    # Replace placeholders in the instruction
+    prompt = translated_instruction.replace("[Premise]", premise)
+    prompt = prompt.replace("[Hypothesis]", hypothesis)
+    prompt = prompt.replace("[Label]", label)
+
+    # Make sure that placeholders in the instruction are resolved, even if they are translated (i.e., "[Premere]", "[Hypothese]", etc.)
+    if language != "english":
+        for component in PROMPT_COMPONENTS[language]:
+            placeholder = f"[{PROMPT_COMPONENTS[language][component]}]"
+            if placeholder in prompt:
+                if component == "Premise":
+                    prompt = prompt.replace(placeholder, premise)
+                elif component == "Hypothesis":
+                    prompt = prompt.replace(placeholder, hypothesis)
+                elif component == "Label":
+                    prompt = prompt.replace(placeholder, label)
+
+    # Check for unresolved English placeholders
+    if "[Premise]" in prompt or "[Hypothesis]" in prompt or "[Label]" in prompt:
+        raise ValueError(f"Unresolved placeholders in prompt: {prompt}")
+    
+    # Check for unresolved Translated placeholders
+    if f"[{PROMPT_COMPONENTS[language]["Premise"]}]" in prompt or f"[{PROMPT_COMPONENTS[language]["Hypothesis"]}]" in prompt or f"[{PROMPT_COMPONENTS[language]["Label"]}]" in prompt:
+        raise ValueError(f"Unresolved placeholders in prompt: {prompt}")
+
+    return prompt
 
 def filter_keywords(keywords, premise, hypothesis, language="english"):
     """
@@ -82,7 +158,6 @@ def filter_keywords(keywords, premise, hypothesis, language="english"):
             filtered_keywords.append(keyword)
 
     return filtered_keywords
-
 
 def enforce_limit(keywords, limit, premise, hypothesis):
     """Ensures that the keyword list meets the required limit by adding words from the premise or hypothesis if necessary."""
@@ -185,6 +260,11 @@ def get_keywords_with_reverse_translation(prompts, LLM_model, limit, premise_hyp
                 max_tokens=50,
                 temperature=0.0
             )
+
+            # Terminal output for debugging showing the prompt sent to the LLM and the full response received
+            # print(f"\n\nprompt: {prompt}\n\n")
+            # print(f"response: {response}")
+
             response_text = response.choices[0].message.content
             
             # Extract keywords and normalize
@@ -234,7 +314,8 @@ def main(languages, limit, LLM_model, subset=20, repeats=5, output_file=None):
             "model": LLM_model,
             "languages": ["english"] + languages,
             "limit": limit,
-            "runs_per_language": repeats
+            "runs_per_language": repeats,
+            "run_date": datetime.now().strftime("%m-%d-%Y, %H:%M:%S")
         },
         "results": []
     }
@@ -258,17 +339,24 @@ def main(languages, limit, LLM_model, subset=20, repeats=5, output_file=None):
     for language in languages:
         translator = get_translator(language)
         
-        # Pass only the language name for reverse translation
-        translated_instruction = translate_static_prompt_parts(translator, limit)
-        
+        # Translate static instruction and dataset
+        translated_instruction = translate_static_prompt_parts(translator, limit, language)
         translated_dataset = translate_batch(dataset, translator)
         
-        translated_prompts = [generate_prompts(row, translated_instruction, language) for row in translated_dataset]
-        translated_premise_hypothesis_pairs = [(row["translated_premise"], row["translated_hypothesis"]) for row in translated_dataset]
+        # Generate and translate prompts
+        translated_prompts = [
+            generate_prompts(row, translated_instruction, language)
+            for row in translated_dataset
+        ]
+        
+        translated_premise_hypothesis_pairs = [
+            (row["translated_premise"], row["translated_hypothesis"])
+            for row in translated_dataset
+        ]
         
         # Run multiple times and get the most common keywords, along with reverse translation if applicable
         translated_keywords_batch, reverse_translated_batch = get_keywords_with_reverse_translation(
-            translated_prompts, LLM_model, limit, translated_premise_hypothesis_pairs, repeats, language  # Pass language name here
+            translated_prompts, LLM_model, limit, translated_premise_hypothesis_pairs, repeats, language
         )
 
         for idx, (translated_keywords, reverse_translated) in enumerate(zip(translated_keywords_batch, reverse_translated_batch)):
