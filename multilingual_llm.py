@@ -7,42 +7,17 @@ import openai
 import torch
 import re
 import string
+import unicodedata
 from deep_translator import GoogleTranslator
 from collections import Counter
-from jaccard import compare_with_components
+from iou_evaluation import compare_with_components
+from config import LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES, HARDCODE_TRANSLATIONS
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 #TODO
 # Hardcode spanish se to "Know" for reverse translation
 # Hardcode to strip punctuation from keywords
-
-LABEL_MAP = {
-    0: "Entailment",
-    1: "Neutral",
-    2: "Contradiction"
-}
-
-TRANSLATION_MODELS = {
-    "spanish": "Helsinki-NLP/opus-mt-en-es",
-    "german": "Helsinki-NLP/opus-mt-en-de",
-    # Add more languages as needed...
-}
-
-# Mapping language names to deep-translator codes
-LANGUAGE_CODES = {
-    "english": "en",
-    "spanish": "es",
-    "german": "de",
-    # Add other languages here as needed...
-}
-
-# For specific keywords that often get mistranslated
-HARDCODE_TRANSLATIONS = {
-    "sé": "know", #sé often gets reverse-translated as "HE"
-    "sé.": "know",
-    "sé,": "know"
-}
 
 device = 0 if torch.cuda.is_available() else -1
 
@@ -67,22 +42,6 @@ def translate_batch(dataset, translator):
         batched=True,
     )
     return dataset
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 def translate_static_prompt_parts(translator, limit):
     """Translates only the static instruction parts of the prompt for a given language."""
@@ -180,9 +139,6 @@ def get_keywords_from_llm_multiple(prompts, LLM_model, limit, premise_hypothesis
     
     return keywords_batch
 
-import unicodedata
-import string
-
 def clean_keyword(keyword):
     """
     Clean a keyword by removing punctuation, normalizing accents, and converting to lowercase.
@@ -261,7 +217,7 @@ def get_keywords_with_reverse_translation(prompts, LLM_model, limit, premise_hyp
     
     return keywords_batch, reverse_translations_batch
 
-def main(languages, limit, LLM_model, subset=20, x=5, output_file=None):
+def main(languages, limit, LLM_model, subset=20, repeats=5, output_file=None):
     dataset = load_dataset("glue", "mnli", split="validation_matched").select(range(subset))
 
     # Generate the static prompt template for English and other languages
@@ -270,7 +226,7 @@ def main(languages, limit, LLM_model, subset=20, x=5, output_file=None):
     premise_hypothesis_pairs = [(row["premise"], row["hypothesis"]) for row in dataset]
     
     # Get keywords with post-filtering, running 'x' times for consistency
-    english_keywords_batch = get_keywords_from_llm_multiple(english_prompts, LLM_model, limit, premise_hypothesis_pairs, x)
+    english_keywords_batch = get_keywords_from_llm_multiple(english_prompts, LLM_model, limit, premise_hypothesis_pairs, repeats)
 
     # Initialize output data structure with metadata
     output_data = {
@@ -278,7 +234,7 @@ def main(languages, limit, LLM_model, subset=20, x=5, output_file=None):
             "model": LLM_model,
             "languages": ["english"] + languages,
             "limit": limit,
-            "runs_per_language": x
+            "runs_per_language": repeats
         },
         "results": []
     }
@@ -312,7 +268,7 @@ def main(languages, limit, LLM_model, subset=20, x=5, output_file=None):
         
         # Run multiple times and get the most common keywords, along with reverse translation if applicable
         translated_keywords_batch, reverse_translated_batch = get_keywords_with_reverse_translation(
-            translated_prompts, LLM_model, limit, translated_premise_hypothesis_pairs, x, language  # Pass language name here
+            translated_prompts, LLM_model, limit, translated_premise_hypothesis_pairs, repeats, language  # Pass language name here
         )
 
         for idx, (translated_keywords, reverse_translated) in enumerate(zip(translated_keywords_batch, reverse_translated_batch)):

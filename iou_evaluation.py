@@ -3,12 +3,13 @@
 import json
 import re
 import time
+import argparse
 from pathlib import Path
-from collections import Counter
+from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
-from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 from difflib import SequenceMatcher
+from nltk.corpus import wordnet
 
 # Load a pre-trained embedding model for semantic similarity
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
@@ -21,53 +22,20 @@ def calculate_string_similarity(word1, word2):
     """Calculate similarity between two words using Levenshtein Distance or similar string comparison."""
     return SequenceMatcher(None, word1, word2).ratio()
 
-def calculate_vector_similarity(word1, word2):
-    """Calculate cosine similarity between two words using embedding vectors."""
-    embeddings = embedding_model.encode([word1, word2])
-    similarity = cosine_similarity([embeddings[0]], [embeddings[1]])
-    return similarity[0][0]
-
 def are_words_comparable(word1, word2, threshold=0.7):
     """Determine if two words are semantically comparable."""
     word1, word2 = word1.lower(), word2.lower()  # Normalize case
 
-    # High string similarity is considered comparable
+    # Check high string similarity
     if calculate_string_similarity(word1, word2) > threshold:
         return True
 
-    # High semantic similarity based on vector comparison
-    if calculate_vector_similarity(word1, word2) > threshold:
+    # Check high semantic similarity based on embedding vectors
+    embeddings = embedding_model.encode([word1, word2])
+    if cosine_similarity([embeddings[0]], [embeddings[1]])[0][0] > threshold:
         return True
 
     return False
-
-def calculate_iou_advanced(set1, set2, threshold=0.7, language="english"):
-    """
-    Calculate Intersection over Union (IoU) with semantic similarity consideration.
-    Account for multi-word translations and compound words.
-    """
-    set1, set2 = normalize_case(set1), normalize_case(set2)
-    intersection = 0
-
-    for word1 in set1:
-        for word2 in set2:
-            if are_words_comparable(word1, word2, threshold) or compare_with_components(word1, set2, language, threshold):
-                intersection += 1
-                break
-
-    union = len(set(set1)) + len(set(set2)) - intersection
-    if union == 0:
-        return 0  # Avoid division by zero
-    return intersection / union
-
-
-
-
-
-import nltk
-from nltk.corpus import wordnet
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 
 # Load pre-trained embedding model
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
@@ -95,26 +63,24 @@ def compare_with_components(word, keywords, language="english", threshold=0.7):
                 return True
     return False
 
-def are_words_comparable(word1, word2, threshold=0.7):
-    """Determine if two words are semantically comparable."""
-    word1, word2 = word1.lower(), word2.lower()  # Normalize case
+def calculate_iou_advanced(set1, set2, threshold=0.7, language="english"):
+    """
+    Calculate Intersection over Union (IoU) with semantic similarity consideration.
+    Account for multi-word translations and compound words.
+    """
+    set1, set2 = normalize_case(set1), normalize_case(set2)
+    intersection = 0
 
-    # Check high string similarity
-    if calculate_string_similarity(word1, word2) > threshold:
-        return True
+    for word1 in set1:
+        for word2 in set2:
+            if are_words_comparable(word1, word2, threshold) or compare_with_components(word1, set2, language, threshold):
+                intersection += 1
+                break
 
-    # Check high semantic similarity based on embedding vectors
-    embeddings = embedding_model.encode([word1, word2])
-    if cosine_similarity([embeddings[0]], [embeddings[1]])[0][0] > threshold:
-        return True
-
-    return False
-
-
-
-
-
-
+    union = len(set(set1)) + len(set(set2)) - intersection
+    if union == 0:
+        return 0  # Avoid division by zero
+    return intersection / union
 
 def compute_iou_from_json_advanced(json_file_path, threshold=0.7):
     """Compute IoU for reverse-translated keywords compared to original English keywords, per language."""
@@ -186,3 +152,24 @@ def jaccard(input_json_path):
     for lang, avg in language_averages.items():
         print(f"{lang}: {avg:.4f}")
     print(f"Overall Average IoU: {overall_average_iou:.4f}")
+
+if __name__ == '__main__':
+    # Manual run using input file
+    parser = argparse.ArgumentParser(description="IoU Evaluation for Multilingual Keyword Extraction")
+    parser.add_argument(
+        "--input", 
+        nargs='+', 
+        required=True, 
+        help="Specify one or more input JSON files for IoU evaluation. At least one input file is required."
+    )
+    args = parser.parse_args()
+
+    for input_file in args.input:
+        if not Path(input_file).exists():
+            print(f"Input file {input_file} does not exist. Skipping.")
+            continue
+
+        print(f"Processing IoU for file: {input_file}")
+        jaccard(input_file)
+
+    print("IoU evaluation completed for all specified files.")

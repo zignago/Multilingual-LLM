@@ -4,10 +4,10 @@ LABEL_MAP = {
     2: "Contradiction"
 }
 
-# Optional Helsinki translation models
 TRANSLATION_MODELS = {
     "spanish": "Helsinki-NLP/opus-mt-en-es",
     "german": "Helsinki-NLP/opus-mt-en-de",
+    # Add more languages as needed...
 }
 
 # Mapping language names to deep-translator codes
@@ -16,4 +16,11 @@ LANGUAGE_CODES = {
     "spanish": "es",
     "german": "de",
     # Add other languages here as needed...
+}
+
+# For specific keywords that often get mistranslated
+HARDCODE_TRANSLATIONS = {
+    "sé": "know", #sé often gets reverse-translated as "HE"
+    "sé.": "know",
+    "sé,": "know"
 }
