@@ -20,6 +20,11 @@ LABEL_TRANSLATION = {
         "Neutral": "Neutrale",
         "Contradiction": "Contraddizione" 
     },
+    "russian": {
+        "Entailment": "Вследствие",
+        "Neutral": "Нейтральный",
+        "Contradiction": "Противоречие" 
+    },
     "spanish": {
         "Entailment": "Vinculación",
         "Neutral": "Neutral",
@@ -31,6 +36,7 @@ TRANSLATION_MODELS = {
     "french": "Helsinki-NLP/opus-mt-en-fr",
     "german": "Helsinki-NLP/opus-mt-en-de",
     "italian": "Helsinki-NLP/opus-mt-en-it",
+    "russian": "Helsinki-NLP/opus-mt-en-ru",
     "spanish": "Helsinki-NLP/opus-mt-en-es"
     # Add more languages as needed...
 }
@@ -41,6 +47,7 @@ LANGUAGE_CODES = {
     "french": "fr",
     "german": "de",
     "italian": "it",
+    "russian": "ru",
     "spanish": "es"
     # Add other languages here as needed...
 }
@@ -65,6 +72,11 @@ PROMPT_COMPONENTS = {
         "Premise": "Premere",
         "Hypothesis": "Ipotesi",
         "Label": "Etichetta"
+    },
+    "russian": {
+        "Premise": "Презюмировать",
+        "Hypothesis": "Гипотеза",
+        "Label": "Лабель"
     },
     "spanish": {
         "Premise": "Premisa",
