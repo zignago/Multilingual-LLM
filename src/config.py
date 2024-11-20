@@ -38,10 +38,8 @@ TRANSLATION_MODELS = {
     "italian": "Helsinki-NLP/opus-mt-en-it",
     "russian": "Helsinki-NLP/opus-mt-en-ru",
     "spanish": "Helsinki-NLP/opus-mt-en-es"
-    # Add more languages as needed...
 }
 
-# Mapping language names to deep-translator codes
 LANGUAGE_CODES = {
     "english": "en",
     "french": "fr",
@@ -49,7 +47,6 @@ LANGUAGE_CODES = {
     "italian": "it",
     "russian": "ru",
     "spanish": "es"
-    # Add other languages here as needed...
 }
 
 PROMPT_COMPONENTS = {
@@ -83,7 +80,6 @@ PROMPT_COMPONENTS = {
         "Hypothesis": "Hipótesis",
         "Label": "Etiqueta"
     },
-    # Add other languages as needed
 }
 
 # For specific keywords that often get mistranslated
@@ -92,3 +88,22 @@ HARDCODE_TRANSLATIONS = {
     "sé.": "know",
     "sé,": "know"
 }
+
+# Models that have been tested and verified to work with this tool
+# Info on GPT models: https://platform.openai.com/docs/models
+SUPPORTED_LLM_MODELS = [
+    "gpt-4o",
+    "gpt-4o-2024-08-06",
+    "gpt-4o-2024-05-13",
+    "gpt-4o-mini",
+    "gpt-4o-mini-2024-07-18",
+    "gpt-4-turbo",
+    "gpt-4-turbo-preview",
+    "gpt-4-0125-preview",
+    "gpt-4-1106-preview",
+    "gpt-4",
+    "gpt-4-0613",
+    "gpt3.5-turbo",
+    "gpt-3.5-turbo-1106",
+    "gpt-3.5-turbo-0125"
+]
