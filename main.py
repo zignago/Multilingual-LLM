@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--output", type=str, help="Optional custom output filename (without path) for JSON results.")
     args = parser.parse_args()
     
-    if args.model not in SUPPORTED_LLM_MODELS:
+    if not any(args.model in models for models in SUPPORTED_LLM_MODELS.values()):
         print(f"ERROR -- unsupported model '{args.model}'\nCurrent supported models:\n{models_formatted_output}\n")
         return 
     
