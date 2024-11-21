@@ -14,8 +14,8 @@ from src.iou_evaluation import compare_with_components
 from deep_translator import GoogleTranslator
 from collections import Counter
 from src.config import (
-    LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES, HARDCODE_TRANSLATIONS,
-    PROMPT_COMPONENTS, LABEL_TRANSLATION, SUPPORTED_LLM_MODELS
+    LABEL_MAP, LANGUAGE_CODES, HARDCODE_TRANSLATIONS,
+    PROMPT_COMPONENTS, SUPPORTED_LLM_MODELS
 )
 
 device = 0 if torch.cuda.is_available() else -1
@@ -26,15 +26,22 @@ llama_handler = LlamaHandler()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def get_translator(language):
-    """Retrieves the translation pipeline for the specified language, if supported."""
+    """
+    Retrieves the translation pipeline for the specified language, if supported.
+    Dynamically constructs the Opus-MT model path using LANGUAGE_CODES.
+    """
     if language == "english":
         return None  # Skip translation for English
 
-    try:
-        model_name = TRANSLATION_MODELS[language]
-    except KeyError:
-        raise ValueError(f"Unsupported language '{language}'. Choose from: {', '.join(TRANSLATION_MODELS.keys())}")
-    
+    # Ensure the language exists in LANGUAGE_CODES
+    if language not in LANGUAGE_CODES:
+        raise ValueError(f"Unsupported language '{language}'. Choose from: {', '.join(LANGUAGE_CODES.keys())}")
+
+    # Dynamically generate the model name
+    language_code = LANGUAGE_CODES[language]
+    model_name = f"Helsinki-NLP/opus-mt-en-{language_code}"
+
+    # Return the translation pipeline
     return pipeline("translation", model=model_name, device=device, batch_size=8)
 
 def translate_batch(dataset, translator):
@@ -46,6 +53,44 @@ def translate_batch(dataset, translator):
         batched=True,
     )
     return dataset
+
+translated_label_cache = {}
+
+def translate_label(label, target_language):
+    """
+    Dynamically translate the label to the target language using the Helsinki translator.
+    :param label: The label to translate (e.g., 'Entailment', 'Neutral', 'Contradiction').
+    :param target_language: The target language as a string (e.g., 'italian', 'german').
+    :return: The translated label.
+    """
+    if target_language == "english":
+        return label  # No translation needed for English
+    
+    # Check if the translation is already cached
+    if target_language in translated_label_cache and label in translated_label_cache[target_language]:
+        return translated_label_cache[target_language][label]
+    
+    # Get the language code
+    if target_language not in LANGUAGE_CODES:
+        raise ValueError(f"Unsupported language '{target_language}'. Choose from: {', '.join(LANGUAGE_CODES.keys())}")
+    language_code = LANGUAGE_CODES[target_language]
+
+    # Initialize the translator
+    model_name = f"Helsinki-NLP/opus-mt-en-{language_code}"
+    translator = pipeline("translation", model=model_name, device=device, batch_size=1)
+
+    # Perform the translation
+    try:
+        translation = translator(label)[0]["translation_text"]
+    except Exception as e:
+        raise RuntimeError(f"Error translating label '{label}' to {target_language}: {e}")
+    
+    # Cache the result
+    if target_language not in translated_label_cache:
+        translated_label_cache[target_language] = {}
+    translated_label_cache[target_language][label] = translation
+
+    return translation
 
 def translate_static_prompt_parts(translator, limit, language="english"):
     """
@@ -81,10 +126,7 @@ def generate_prompts(row, translated_instruction, language="english"):
 
     label = LABEL_MAP[row["label"]]
     if language != "english":
-        label = LABEL_TRANSLATION[language][label]
-
-    # Output for debugging placeholders
-    # print(f"pre-replacement prompt: {translated_instruction}")
+        label = translate_label(label, language)
 
     # Replace placeholders in the instruction
     prompt = translated_instruction.replace("[Premise]", premise)
@@ -110,6 +152,8 @@ def generate_prompts(row, translated_instruction, language="english"):
     # Check for unresolved Translated placeholders
     if f"[{PROMPT_COMPONENTS[language]["Premise"]}]" in prompt or f"[{PROMPT_COMPONENTS[language]["Hypothesis"]}]" in prompt or f"[{PROMPT_COMPONENTS[language]["Label"]}]" in prompt:
         raise ValueError(f"Unresolved placeholders in prompt: {prompt}")
+
+    print(f"\n\npost-replacement prompt: {prompt}\n\n")
 
     return prompt
 
@@ -328,10 +372,15 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
         translated_dataset = translate_batch(dataset, translator)
 
         translated_prompts = [
-            generate_prompts(row, translated_instruction, language) for row in translated_dataset
+            generate_prompts(row, translated_instruction, language)
+            for row in translated_dataset
         ]
         translated_premise_hypothesis_pairs = [
-            (row["translated_premise"], row["translated_hypothesis"], LABEL_TRANSLATION[language][LABEL_MAP[row["label"]]])
+            (
+                row["translated_premise"], 
+                row["translated_hypothesis"], 
+                translate_label(LABEL_MAP[row["label"]], language)  # Dynamically translate label
+            )
             for row in translated_dataset
         ]
 
