@@ -20,10 +20,16 @@ from src.config import (
 
 device = 0 if torch.cuda.is_available() else -1
 
-# Initialize LLaMA handler
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 llama_handler = LlamaHandler()
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+def determine_model_type(model_name):
+    """Determines whether the model is GPT-based or LLaMA-based."""
+    for model_type, models in SUPPORTED_LLM_MODELS.items():
+        if model_name in models:
+            return model_type
+    raise ValueError(f"Model {model_name} is not supported. Supported models: {SUPPORTED_LLM_MODELS}")
 
 def get_translator(language):
     """
@@ -114,6 +120,18 @@ def translate_static_prompt_parts(translator, limit, language="english"):
 
     return translated_instruction
 
+def mark_keywords_in_prompt(prompt, keywords):
+    """
+    Add markers around the specified keywords in the prompt.
+    :param prompt: The original prompt as a string.
+    :param keywords: A list of keywords to mark.
+    :return: The modified prompt with markers.
+    """
+    for keyword in keywords:
+        # Use regex to match the whole word and wrap it in markers
+        prompt = re.sub(rf'\b{re.escape(keyword)}\b', rf'[{keyword}]', prompt, flags=re.IGNORECASE)
+    return prompt
+
 # Works for full prompt, just leaves parts untranslated
 def generate_prompts(row, translated_instruction, language="english"):
     """
@@ -127,6 +145,9 @@ def generate_prompts(row, translated_instruction, language="english"):
     label = LABEL_MAP[row["label"]]
     if language != "english":
         label = translate_label(label, language)
+    
+    premise = premise.lower()
+    hypothesis = hypothesis.lower()
 
     # Replace placeholders in the instruction
     prompt = translated_instruction.replace("[Premise]", premise)
@@ -189,13 +210,6 @@ def get_common_keywords(all_keywords, limit):
     keyword_counts = Counter(flat_keywords)
     most_common_keywords = [keyword for keyword, _ in keyword_counts.most_common(limit)]
     return most_common_keywords
-
-def determine_model_type(model_name):
-    """Determines whether the model is GPT-based or LLaMA-based."""
-    for model_type, models in SUPPORTED_LLM_MODELS.items():
-        if model_name in models:
-            return model_type
-    raise ValueError(f"Model {model_name} is not supported. Supported models: {SUPPORTED_LLM_MODELS}")
 
 def refine_prompt_for_o1_preview(prompt):
     return f"Task: {prompt.strip()}\n\nOutput: Keywords: [\"a\", \"b\", \"c\", \"d\"]"
@@ -280,27 +294,38 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
     Runs the keyword extraction 'x' times for each prompt and returns the most common 'limit' keywords,
     along with reverse translation if applicable.
     """
+
     keywords_batch = []
     reverse_translations_batch = []
 
+    # Initialize translator for the target language
+    translator = None if language_name == "english" else get_translator(language_name)
+
     for idx, prompt in enumerate(prompts):
         all_run_keywords = []
+
+        # Translate the prompt if necessary
+        translated_prompt = translator(prompt)[0]["translation_text"] if translator else prompt
+
+        # Translate premise and hypothesis for validation
+        premise, hypothesis = premise_hypothesis_pairs[idx][:2]
+        translated_premise = translator(premise)[0]["translation_text"] if translator else premise
+        translated_hypothesis = translator(hypothesis)[0]["translation_text"] if translator else hypothesis
 
         # Run the keyword extraction 'x' times
         for run in range(x):
             model_type = determine_model_type(model_name)
             if model_type == "gpt":
-                response_text = run_gpt(prompt, model_name)
+                response_text = run_gpt(translated_prompt, model_name)
             elif model_type == "llama":
                 # Assuming label is embedded in the prompt
-                response_text = run_llama(prompt, model_name, premise_hypothesis_pairs[idx][2])
+                response_text = run_llama(translated_prompt, model_name, premise_hypothesis_pairs[idx][2])
 
             # Parse and validate keywords from the response
-            premise, hypothesis = premise_hypothesis_pairs[idx][:2]
-            keywords = parse_keywords_from_response(response_text, premise, hypothesis)
+            keywords = parse_keywords_from_response(response_text, translated_premise, translated_hypothesis)
 
             # Enforce limit and add to collection
-            limited_keywords = enforce_limit(keywords, limit, premise, hypothesis)
+            limited_keywords = enforce_limit(keywords, limit, translated_premise, translated_hypothesis)
             all_run_keywords.append(limited_keywords)
 
             print(f"Run {run + 1} for prompt {idx + 1}: {limited_keywords}")
@@ -312,34 +337,42 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
         # Reverse translate keywords back to English if language is not English
         if language_name != "english":
             reverse_translated_keywords = reverse_translate_keywords_deeptranslator(common_keywords, language_name)
-            # Maintain order during reverse translation
-            reverse_translated_keywords_ordered = [
-                reverse_translated_keywords[common_keywords.index(k)] if k in common_keywords else k for k in common_keywords
-            ]
-            reverse_translations_batch.append(reverse_translated_keywords_ordered)
+            reverse_translations_batch.append(reverse_translated_keywords)
         else:
             reverse_translations_batch.append(common_keywords)
 
     return keywords_batch, reverse_translations_batch
 
+
 def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
     """
-    Main function for multilingual keyword extraction and reverse translation.
+    Main function for multilingual keyword extraction, marking, and reverse translation.
     """
     # Load dataset and select a subset
     dataset = load_dataset("glue", "mnli", split="validation_matched").select(range(subset))
 
-    # Generate prompts and premise-hypothesis pairs for English
+    # Generate raw English prompts and premise-hypothesis pairs
     english_instruction = translate_static_prompt_parts(None, limit)
     english_prompts = [generate_prompts(row, english_instruction, "english") for row in dataset]
     premise_hypothesis_pairs = [(row["premise"], row["hypothesis"], LABEL_MAP[row["label"]]) for row in dataset]
 
-    # Run the English prompts through the model
+    # Extract keywords for raw English prompts
     english_keywords_batch, _ = get_keywords_with_reverse_translation(
         english_prompts, model_name, limit, premise_hypothesis_pairs, repeats, "english"
     )
 
-    # Initialize output data structure
+    # Create marked prompts for translation
+    marked_english_prompts = [
+        mark_keywords_in_prompt(english_prompts[idx], english_keywords_batch[idx])
+        for idx in range(len(english_prompts))
+    ]
+
+    # Log marked English prompts
+    print("\nMarked English Prompts with Keywords:")
+    for idx, prompt in enumerate(marked_english_prompts, 1):
+        print(f"Prompt {idx}: {prompt}")
+
+    # Output structure
     output_data = {
         "metadata": {
             "model": model_name,
@@ -351,7 +384,7 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
         "results": [],
     }
 
-    # Save English results
+    # Save raw English results
     for idx, english_keywords in enumerate(english_keywords_batch, 1):
         output_data["results"].append({
             "idx": idx,
@@ -365,39 +398,38 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
             "english": english_keywords,
         })
 
-    # Process each additional language
+    # Translate prompts for each target language
     for language in languages:
         translator = get_translator(language)
-        translated_instruction = translate_static_prompt_parts(translator, limit, language)
-        translated_dataset = translate_batch(dataset, translator)
-
-        translated_prompts = [
-            generate_prompts(row, translated_instruction, language)
-            for row in translated_dataset
-        ]
-        translated_premise_hypothesis_pairs = [
-            (
-                row["translated_premise"], 
-                row["translated_hypothesis"], 
-                translate_label(LABEL_MAP[row["label"]], language)  # Dynamically translate label
-            )
-            for row in translated_dataset
+        translated_prompts_marked = [
+            translator(marked_prompt)[0]["translation_text"]
+            for marked_prompt in marked_english_prompts
         ]
 
-        # Get keywords and reverse translations
-        translated_keywords_batch, reverse_translated_batch = get_keywords_with_reverse_translation(
-            translated_prompts, model_name, limit, translated_premise_hypothesis_pairs, repeats, language
+        # Log translated marked prompts
+        print(f"\nTranslated Marked Prompts for {language.capitalize()}:")
+        for idx, translated_prompt in enumerate(translated_prompts_marked, 1):
+            print(f"Prompt {idx} (Marked): {translated_prompt}\n")
+
+        translated_prompts_unmarked = [
+            translator(unmarked_prompt)[0]["translation_text"]
+            for unmarked_prompt in english_prompts
+        ]
+
+        print(f"\nQueried {language.capitalize()} Prompts:")
+        for idx, translated_prompt in enumerate(translated_prompts_unmarked, 1):
+            print(f"Prompt {idx}: {translated_prompt}\n")
+
+        # Run translated prompts through the model
+        translated_keywords_batch, reverse_translations_batch = get_keywords_with_reverse_translation(
+            translated_prompts_unmarked, model_name, limit, premise_hypothesis_pairs, repeats, language
         )
 
         # Save translated results
-        for idx, (translated_keywords, reverse_translated) in enumerate(zip(translated_keywords_batch, reverse_translated_batch)):
+        for idx, (translated_keywords, reverse_translated) in enumerate(zip(translated_keywords_batch, reverse_translations_batch)):
             output_data["results"][idx][language] = translated_keywords
-            output_data["results"][idx]["prompts"][language] = translated_prompts[idx]
-            output_data["results"][idx]["translations"][language] = {
-                "premise": translated_dataset[idx]["translated_premise"],
-                "hypothesis": translated_dataset[idx]["translated_hypothesis"],
-            }
-            if language != "english":  # Add reverse translations only for non-English
+            output_data["results"][idx]["prompts"][language] = translated_prompts_unmarked[idx]
+            if language != "english":
                 output_data["results"][idx][f"{language}-to-english"] = reverse_translated
 
     # Save results to file
@@ -411,6 +443,6 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
 
     with open(output_file_path, "w", encoding="utf-8") as json_file:
         json.dump(output_data, json_file, ensure_ascii=False, indent=4)
-    print(f"Results saved to {output_file_path}")
+    print(f"Results saved to {output_file_path}".replace("../", ""))
 
     return output_file_path

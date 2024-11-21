@@ -5,11 +5,11 @@ import json
 import shutil
 from src.config import SUPPORTED_LLM_MODELS
 
-def output_handler(iou_results, rank_results, keywords_json_path):
+def output_handler(iou_results, rank_results, keywords_json_path, model):
 
     # Generate timestamp and output directory
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"outputs/run_{timestamp}")
+    timestamp = time.strftime("%m-%d_%H-%M-%S")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"outputs\{timestamp}_{model}")
     os.makedirs(output_dir, exist_ok=True)
 
     # Save IoU results to JSON
@@ -34,18 +34,17 @@ def output_handler(iou_results, rank_results, keywords_json_path):
     except Exception as e:
         print(f"Error occurred: {e}")
 
-
 def main():
     models_formatted_output = "\n".join(
         [f"\n{category.upper()}:\n   - " + "\n   - ".join(models) for category, models in SUPPORTED_LLM_MODELS.items()]
     )
 
     parser = argparse.ArgumentParser(description="Multilingual LLM Keyword Extraction")
+    parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help=f"Specify the LLM model to run. Current supported models:\n{models_formatted_output}\n")
     parser.add_argument("--languages", nargs="+", default=["german"], help="Specify one or more target languages.")
     parser.add_argument("--limit", type=int, default=3, help="Limit to top n keywords.")
-    parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help=f"Specify the LLM model to run. Current supported models:\n{models_formatted_output}\n")
     parser.add_argument("--subset", type=int, default=20, help="Amount of entries in the dataset to use. Default=20")
-    parser.add_argument("--repeat", type=int, default=1, help="Specify the number of times to run each query.")
+    parser.add_argument("--iterations", type=int, default=1, help="Specify the number of times to run each query.")
     parser.add_argument("--output", type=str, help="Optional custom output filename (without path) for JSON results.")
     args = parser.parse_args()
     
@@ -54,21 +53,21 @@ def main():
         return 
     
     print(f"Running with the following parameters:\n"
-      f" - Languages: {', '.join(args.languages)}\n"
-      f" - Limit: {args.limit}\n"
-      f" - Model: {args.model}\n"
-      f" - Subset size: {args.subset}\n"
-      f" - Repeat: {args.repeat}\n"
-      f" - Output file: {args.output if args.output else 'Not specified'}\n")
+        f" - Model: {args.model}\n"
+        f" - Languages: {', '.join(args.languages)}\n"
+        f" - Keyword limit: {args.limit}\n"
+        f" - Subset size: {args.subset}\n"
+        f" - Prompt iterations: {args.iterations}\n"
+        f" - Output file: {args.output if args.output else 'Not specified'}\n")
       
     # Import here to prevent long loads before input validation
     from src.multilingual_llm import main as multilingual_llm
     from src.iou_evaluation import jaccard
     from src.rank_correlation import compute_rank_correlation
 
-    keywords_json_path = multilingual_llm(args.languages, args.limit, args.model, args.subset, args.repeat, args.output)
+    keywords_json_path = multilingual_llm(args.languages, args.limit, args.model, args.subset, args.iterations, args.output)
 
-    output_handler(jaccard(keywords_json_path), compute_rank_correlation(keywords_json_path), keywords_json_path)
+    output_handler(jaccard(keywords_json_path), compute_rank_correlation(keywords_json_path), keywords_json_path, args.model)
     
 if __name__ == "__main__":
     main()
