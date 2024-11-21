@@ -18,11 +18,12 @@ from src.config import (
     PROMPT_COMPONENTS, LABEL_TRANSLATION, SUPPORTED_LLM_MODELS
 )
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
 device = 0 if torch.cuda.is_available() else -1
 
 # Initialize LLaMA handler
 llama_handler = LlamaHandler()
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def get_translator(language):
     """Retrieves the translation pipeline for the specified language, if supported."""
@@ -45,39 +46,6 @@ def translate_batch(dataset, translator):
         batched=True,
     )
     return dataset
-
-# def translate_static_prompt_parts(translator, limit, language="english"):
-#     """
-#     Translates only the static instruction parts of the prompt for a given language.
-#     Uses hardcoded translations for premise, hypothesis, and label to avoid errors.
-#     """
-#     if language not in PROMPT_COMPONENTS:
-#         raise ValueError(f"Language '{language}' is not supported in PROMPT_COMPONENTS.")
-
-#     # Check all required keys exist
-#     for key in ["premise", "hypothesis", "label"]:
-#         if key not in PROMPT_COMPONENTS[language]:
-#             raise KeyError(f"Missing '{key}' in PROMPT_COMPONENTS for language '{language}'.")
-
-#     # Define the static instruction template
-#     static_instruction = (
-#         f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis. "
-#         "Include only words from the premise and hypothesis. Do not include any other words. "
-#         "Do not include punctuation or commas ('.' or ',') in keywords.\n"
-#         "Premise: [Premise]\nHypothesis: [Hypothesis]\nLabel: [Label]\n\n"
-#         'Return keywords in array format like ["a", "b", "c"]. Include only single words, no phrases.'
-#     )
-
-#     # Replace placeholders with translations
-#     static_instruction = static_instruction.replace("[Premise]", PROMPT_COMPONENTS[language]["premise"])
-#     static_instruction = static_instruction.replace("[Hypothesis]", PROMPT_COMPONENTS[language]["hypothesis"])
-#     static_instruction = static_instruction.replace("[Label]", PROMPT_COMPONENTS[language]["label"])
-
-#     # Translate the instruction if a translator is provided
-#     if translator:
-#         static_instruction = translator(static_instruction)[0]['translation_text']
-
-#     return static_instruction
 
 def translate_static_prompt_parts(translator, limit, language="english"):
     """
@@ -185,14 +153,22 @@ def determine_model_type(model_name):
             return model_type
     raise ValueError(f"Model {model_name} is not supported. Supported models: {SUPPORTED_LLM_MODELS}")
 
+def refine_prompt_for_o1_preview(prompt):
+    return f"Task: {prompt.strip()}\n\nOutput: Keywords: [\"a\", \"b\", \"c\", \"d\"]"
+
 def run_gpt(prompt, model_name):
     """Runs GPT-based models using OpenAI API."""
-    response = openai.chat.completions.create(
-        model=model_name,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=50,
-        temperature=0.0
-    )
+    is_o1_preview = "o1-preview" in model_name
+    if is_o1_preview:
+        prompt = refine_prompt_for_o1_preview(prompt)
+
+    max_tokens_param = "max_tokens" if not is_o1_preview else "max_completion_tokens"
+    request_params = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        max_tokens_param: 50,
+    }
+    response = openai.chat.completions.create(**request_params)
     return response.choices[0].message.content
 
 def run_llama(prompt, model_name, label):
@@ -206,41 +182,6 @@ def run_llama(prompt, model_name, label):
     full_prompt = f"{prompt}\nLabel: {label}"
     response = llama_handler.run_prompt(full_prompt, model_name=model_name)
     return response
-
-def get_keywords_from_llm_multiple(prompts, model_name, limit, premise_hypothesis_pairs, x):
-    """Runs the keyword extraction `x` times for each prompt and returns the most common `limit` keywords."""
-    model_type = determine_model_type(model_name)
-    keywords_batch = []
-    
-    for idx, prompt in enumerate(prompts):
-        all_run_keywords = []  # Collect keywords from each run
-        
-        # Unpack premise, hypothesis, and label
-        premise, hypothesis, label = premise_hypothesis_pairs[idx]
-        
-        for run in range(x):
-            if model_type == "gpt":
-                response_text = run_gpt(prompt, model_name)
-            elif model_type == "llama":
-                response_text = run_llama(prompt, model_name, label)  # Pass the label here
-
-            # Extract keywords and filter by premise/hypothesis words only
-            keywords = re.findall(r'"(.*?)"', response_text)
-            if not keywords:
-                keywords = [word.strip() for word in response_text.strip("[]").split(",")]
-            
-            # Filter and enforce limit
-            filtered_keywords = filter_keywords(keywords, premise, hypothesis)
-            limited_keywords = enforce_limit(filtered_keywords, limit, premise, hypothesis)
-            all_run_keywords.append(limited_keywords)
-
-            print(f"Run {run + 1} for prompt {idx + 1}: {limited_keywords}")
-        
-        # Most common keywords
-        common_keywords = get_common_keywords(all_run_keywords, limit)
-        keywords_batch.append(common_keywords)
-    
-    return keywords_batch
 
 def clean_keyword(keyword):
     """
@@ -270,6 +211,26 @@ def reverse_translate_keywords_deeptranslator(keywords, source_language):
 
     return reverse_translated_keywords  # Order is preserved
 
+def parse_keywords_from_response(response_text, premise, hypothesis):
+    """
+    Extracts keywords from the model's response and validates them
+    against the premise and hypothesis.
+    """
+    # Attempt to extract a JSON-like array from the response
+    match = re.search(r'\["(.*?)"\]', response_text)
+    if not match:
+        # If no valid array found, treat as a simple comma-separated list
+        keywords = [word.strip() for word in response_text.strip("[]").split(",")]
+    else:
+        keywords = match.group(1).split('", "')
+
+    # Normalize keywords (remove punctuation, lowercase)
+    keywords = [clean_keyword(word) for word in keywords]
+
+    # Validate keywords against premise and hypothesis
+    allowed_words = set(premise.lower().split() + hypothesis.lower().split())
+    return [keyword for keyword in keywords if keyword in allowed_words]
+
 def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hypothesis_pairs, x, language_name):
     """
     Runs the keyword extraction 'x' times for each prompt and returns the most common 'limit' keywords,
@@ -290,22 +251,12 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
                 # Assuming label is embedded in the prompt
                 response_text = run_llama(prompt, model_name, premise_hypothesis_pairs[idx][2])
 
-            # Terminal output for debugging showing the prompt sent to the LLM and the full response received
-            # print(f"\n\nprompt: {prompt}\n\n")
-            # print(f"response: {response}")
-
-            # Extract keywords and normalize
-            keywords = re.findall(r'"(.*?)"', response_text)
-            if not keywords:
-                keywords = [word.strip() for word in response_text.strip("[]").split(",")]
-            keywords = [clean_keyword(word) for word in keywords]  # Normalize keywords
-
-            # Filter keywords based on premise and hypothesis
+            # Parse and validate keywords from the response
             premise, hypothesis = premise_hypothesis_pairs[idx][:2]
-            filtered_keywords = filter_keywords(keywords, premise, hypothesis)
+            keywords = parse_keywords_from_response(response_text, premise, hypothesis)
 
             # Enforce limit and add to collection
-            limited_keywords = enforce_limit(filtered_keywords, limit, premise, hypothesis)
+            limited_keywords = enforce_limit(keywords, limit, premise, hypothesis)
             all_run_keywords.append(limited_keywords)
 
             print(f"Run {run + 1} for prompt {idx + 1}: {limited_keywords}")
@@ -318,7 +269,9 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
         if language_name != "english":
             reverse_translated_keywords = reverse_translate_keywords_deeptranslator(common_keywords, language_name)
             # Maintain order during reverse translation
-            reverse_translated_keywords_ordered = [reverse_translated_keywords[common_keywords.index(k)] if k in common_keywords else k for k in common_keywords]
+            reverse_translated_keywords_ordered = [
+                reverse_translated_keywords[common_keywords.index(k)] if k in common_keywords else k for k in common_keywords
+            ]
             reverse_translations_batch.append(reverse_translated_keywords_ordered)
         else:
             reverse_translations_batch.append(common_keywords)

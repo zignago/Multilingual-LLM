@@ -1,5 +1,39 @@
 import argparse
+import os
+import time
+import json
+import shutil
 from src.config import SUPPORTED_LLM_MODELS
+
+def output_handler(iou_results, rank_results, keywords_json_path):
+
+    # Generate timestamp and output directory
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"outputs/run_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save IoU results to JSON
+    output_iou_path = os.path.join(output_dir, f"iou_output_{timestamp}.json")
+    with open(output_iou_path, "w", encoding="utf-8") as file:
+        json.dump(iou_results, file, ensure_ascii=False, indent=4)
+    print(f"IoU results saved to {output_iou_path}")
+
+    # Save rank correlation results to JSON
+    output_rank_path = os.path.join(output_dir, f"rank_output_{timestamp}.json")
+    with open(output_rank_path, "w", encoding="utf-8") as file:
+        json.dump(rank_results, file, ensure_ascii=False, indent=4)
+    print(f"Rank correlation results saved to {output_rank_path}")
+
+    # Move keywords JSON into the output directory
+    output_keywords_path = os.path.join(output_dir, os.path.basename(keywords_json_path))
+    try:
+        shutil.move(keywords_json_path, output_keywords_path)
+        print(f"File moved successfully to {output_keywords_path}")
+    except FileNotFoundError:
+        print(f"Source file {keywords_json_path} not found.")
+    except Exception as e:
+        print(f"Error occurred: {e}")
+
 
 def main():
     models_formatted_output = "\n".join(
@@ -27,10 +61,14 @@ def main():
       f" - Repeat: {args.repeat}\n"
       f" - Output file: {args.output if args.output else 'Not specified'}\n")
       
-    from src.multilingual_llm import main
+    # Import here to prevent long loads before input validation
+    from src.multilingual_llm import main as multilingual_llm
     from src.iou_evaluation import jaccard
+    from src.rank_correlation import compute_rank_correlation
 
-    jaccard(main(args.languages, args.limit, args.model, args.subset, args.repeat, args.output))
+    keywords_json_path = multilingual_llm(args.languages, args.limit, args.model, args.subset, args.repeat, args.output)
 
+    output_handler(jaccard(keywords_json_path), compute_rank_correlation(keywords_json_path), keywords_json_path)
+    
 if __name__ == "__main__":
     main()

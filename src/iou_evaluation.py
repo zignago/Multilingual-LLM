@@ -1,5 +1,3 @@
-# Inplementing Intersection Over Union (IoU) Scoring using Jaccard Index
-
 import json
 import re
 import time
@@ -124,16 +122,6 @@ def compute_iou_from_json_advanced(json_file_path, threshold=0.7):
     # Output results
     return iou_scores, language_averages, overall_average_iou
 
-def save_iou_results(iou_scores, language_averages, overall_average_iou, output_path):
-    """Save IoU results to a JSON file."""
-    results = {
-        "per_language_iou": language_averages,
-        "overall_average_iou": overall_average_iou,
-        "detailed_iou_scores": iou_scores
-    }
-    with open(output_path, "w", encoding="utf-8") as file:
-        json.dump(results, file, ensure_ascii=False, indent=4)
-
 def jaccard(input_json_path):
     # Ensure input file exists
     if not Path(input_json_path).exists():
@@ -148,13 +136,8 @@ def jaccard(input_json_path):
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../outputs")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Construct the full path for the output file
-    output_iou_path = os.path.join(output_dir, output_filename)
-
-    # Compute IoU and save results
+    # Compute IoU
     iou_scores, language_averages, overall_average_iou = compute_iou_from_json_advanced(input_json_path, threshold=0.7)
-    save_iou_results(iou_scores, language_averages, overall_average_iou, output_iou_path)
-    print(f"IoU results saved to outputs/{output_filename}")
 
     # Print per-language averages and overall average
     print("Per-Language IoU Averages:")
@@ -162,8 +145,16 @@ def jaccard(input_json_path):
         print(f"{lang}: {avg:.4f}")
     print(f"Overall Average IoU: {overall_average_iou:.4f}")
 
+    results = {
+        "per_language_iou": language_averages,
+        "overall_average_iou": overall_average_iou,
+        "detailed_iou_scores": iou_scores
+    }
+
+    return results
+
 if __name__ == '__main__':
-    # Manual run using input file
+    # Only use for Manual run using explicit input file
     parser = argparse.ArgumentParser(description="IoU Evaluation for Multilingual Keyword Extraction")
     parser.add_argument(
         "--input", 

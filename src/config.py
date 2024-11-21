@@ -91,8 +91,11 @@ HARDCODE_TRANSLATIONS = {
 
 # Models that have been tested and verified to work with this tool
 # Info on GPT models: https://platform.openai.com/docs/models
+# Info on LLAMA models: https://docs.llama-api.com/quickstart
 SUPPORTED_LLM_MODELS = {
     "gpt": [
+        "o1-preview",
+        "o1-mini",
         "gpt-4o",
         "gpt-4o-2024-08-06",
         "gpt-4o-2024-05-13",
@@ -114,31 +117,18 @@ SUPPORTED_LLM_MODELS = {
         "llama3.2-3b",
         "llama3.2-90b",
         "llama3.1-405b",
-        "llama3.1-70b", # tested
+        "llama3.1-70b",
         "llama3.1-8b",
         "llama3-70b",
         "llama3-8b",
         "gemma2-27b",
         "gemma2-9b",
-        "mixtral-8x22b",
         "mixtral-8x22b-instruct",
         "mixtral-8x7b-instruct",
-        "mistral-7b",
         "mistral-7b-instruct",
-        "llama-7b-32k",
         "llama2-13b", 
         "llama2-70b",
-        "llama2-7b",    # tested
+        "llama2-7b",
         "Nous-Hermes-2-Mixtral-8x7B-DPO",
-        "Nous-Hermes-2-Yi-34B",
-        "Qwen1.5-0.5B-Chat",
-        "Qwen1.5-1.8B-Chat",
-        "Qwen1.5-110B-Chat",
-        "Qwen1.5-14B-Chat",
-        "Qwen1.5-32B-Chat",
-        "Qwen1.5-4B-Chat",
-        "Qwen1.5-72B-Chat",
-        "Qwen1.5-7B-Chat",
-        "Qwen2-72B-Instruct"
     ]
 }
