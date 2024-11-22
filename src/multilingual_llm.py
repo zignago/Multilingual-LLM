@@ -4,12 +4,13 @@ import time
 from datetime import datetime
 from datasets import load_dataset
 from transformers import pipeline
-import openai
 import torch
 import re
 import string
 import unicodedata
+import openai
 from src.llama_handler import LlamaHandler
+from src.gemini_handler import GeminiHandler
 from deep_translator import GoogleTranslator
 from collections import Counter
 from src.config import (
@@ -22,12 +23,17 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 llama_handler = LlamaHandler()
 
+gemini_handler = GeminiHandler()
+
 def determine_model_type(model_name):
-    """Determines whether the model is GPT-based or LLaMA-based."""
-    for model_type, models in SUPPORTED_LLM_MODELS.items():
-        if model_name in models:
-            return model_type
-    raise ValueError(f"Model {model_name} is not supported. Supported models: {SUPPORTED_LLM_MODELS}")
+    """Determines whether the model is GPT-based, LLaMA-based, or Gemini-based."""
+    if model_name.startswith("gpt"):
+        return "gpt"
+    elif model_name.startswith("llama"):
+        return "llama"
+    elif model_name.startswith("gemini"):
+        return "gemini"
+    raise ValueError(f"Model {model_name} is not supported.")
 
 def get_translator(language):
     """
@@ -277,9 +283,6 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
     for idx, prompt in enumerate(prompts):
         all_run_keywords = []
 
-        # # Translate the prompt if necessary
-        # translated_prompt = translator(prompt)[0]["translation_text"] if translator else prompt
-
         # # Translate premise and hypothesis for validation
         premise, hypothesis = premise_hypothesis_pairs[idx][:2]
         translated_premise = translator(premise)[0]["translation_text"] if translator else premise
@@ -291,11 +294,15 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
             if model_type == "gpt":
                 response_text = run_gpt(prompt, model_name)
             elif model_type == "llama":
-                # Assuming label is embedded in the prompt
                 response_text = run_llama(prompt, model_name, premise_hypothesis_pairs[idx][2])
+            elif model_type == "gemini":
+                response_text = gemini_handler.run_prompt(prompt)
 
             # Parse and validate keywords from the response
-            keywords = parse_keywords_from_response(response_text, translated_premise, translated_hypothesis)
+            if model_type == "gemini":
+                keywords = gemini_handler.parse_keywords(response_text, translated_premise, translated_hypothesis)
+            else:
+                keywords = parse_keywords_from_response(response_text, translated_premise, translated_hypothesis)
 
             # Enforce limit and add to collection
             limited_keywords = enforce_limit(keywords, limit, translated_premise, translated_hypothesis)

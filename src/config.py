@@ -45,6 +45,12 @@ SUPPORTED_LLM_MODELS = {
         "llama2-70b",
         "llama2-7b",
         "Nous-Hermes-2-Mixtral-8x7B-DPO",
+    ],
+    "gemini": [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-pro"
+
     ]
 }
 
