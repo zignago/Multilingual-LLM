@@ -3,19 +3,17 @@ import json
 import time
 from datetime import datetime
 from datasets import load_dataset
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+from transformers import pipeline
 import openai
 import torch
 import re
 import string
 import unicodedata
 from src.llama_handler import LlamaHandler
-from src.iou_evaluation import compare_with_components
 from deep_translator import GoogleTranslator
 from collections import Counter
 from src.config import (
-    LABEL_MAP, LANGUAGE_CODES, HARDCODE_TRANSLATIONS,
-    PROMPT_COMPONENTS, SUPPORTED_LLM_MODELS
+    LABEL_MAP, TRANSLATION_MODELS, LANGUAGE_CODES, SUPPORTED_LLM_MODELS
 )
 
 device = 0 if torch.cuda.is_available() else -1
@@ -34,69 +32,17 @@ def determine_model_type(model_name):
 def get_translator(language):
     """
     Retrieves the translation pipeline for the specified language, if supported.
-    Dynamically constructs the Opus-MT model path using LANGUAGE_CODES.
+    Dynamically constructs the Opus-MT model path using TRANSLATION_MODELS.
     """
     if language == "english":
         return None  # Skip translation for English
 
-    # Ensure the language exists in LANGUAGE_CODES
-    if language not in LANGUAGE_CODES:
-        raise ValueError(f"Unsupported language '{language}'. Choose from: {', '.join(LANGUAGE_CODES.keys())}")
-
-    # Dynamically generate the model name
-    language_code = LANGUAGE_CODES[language]
-    model_name = f"Helsinki-NLP/opus-mt-en-{language_code}"
+    # Ensure the language exists in TRANSLATION_MODELS
+    if language not in TRANSLATION_MODELS or not TRANSLATION_MODELS[language]:
+        raise ValueError(f"Unsupported language '{language}'. Choose from: {', '.join(TRANSLATION_MODELS.keys())}")
 
     # Return the translation pipeline
-    return pipeline("translation", model=model_name, device=device, batch_size=8)
-
-def translate_batch(dataset, translator):
-    dataset = dataset.map(
-        lambda examples: {
-            "translated_premise": [item["translation_text"] for item in translator(examples["premise"])],
-            "translated_hypothesis": [item["translation_text"] for item in translator(examples["hypothesis"])],
-        },
-        batched=True,
-    )
-    return dataset
-
-translated_label_cache = {}
-
-def translate_label(label, target_language):
-    """
-    Dynamically translate the label to the target language using the Helsinki translator.
-    :param label: The label to translate (e.g., 'Entailment', 'Neutral', 'Contradiction').
-    :param target_language: The target language as a string (e.g., 'italian', 'german').
-    :return: The translated label.
-    """
-    if target_language == "english":
-        return label  # No translation needed for English
-    
-    # Check if the translation is already cached
-    if target_language in translated_label_cache and label in translated_label_cache[target_language]:
-        return translated_label_cache[target_language][label]
-    
-    # Get the language code
-    if target_language not in LANGUAGE_CODES:
-        raise ValueError(f"Unsupported language '{target_language}'. Choose from: {', '.join(LANGUAGE_CODES.keys())}")
-    language_code = LANGUAGE_CODES[target_language]
-
-    # Initialize the translator
-    model_name = f"Helsinki-NLP/opus-mt-en-{language_code}"
-    translator = pipeline("translation", model=model_name, device=device, batch_size=1)
-
-    # Perform the translation
-    try:
-        translation = translator(label)[0]["translation_text"]
-    except Exception as e:
-        raise RuntimeError(f"Error translating label '{label}' to {target_language}: {e}")
-    
-    # Cache the result
-    if target_language not in translated_label_cache:
-        translated_label_cache[target_language] = {}
-    translated_label_cache[target_language][label] = translation
-
-    return translation
+    return pipeline("translation", model=TRANSLATION_MODELS[language], device=device, batch_size=8)
 
 def translate_static_prompt_parts(translator, limit, language="english"):
     """
@@ -105,7 +51,7 @@ def translate_static_prompt_parts(translator, limit, language="english"):
     """
     # Define the static instruction template with placeholders
     static_instruction = (
-        f"Identify the top {limit} keywords relevant to understanding the relationship between the premise and hypothesis. "
+        f"Identify the most important {limit} keywords for understanding the relationship between the premise and hypothesis. "
         "Include only words from the premise and hypothesis. Do not include any other words. "
         "Do not include punctuation or commas ('.' or ',') in keywords.\n"
         "Premise: [Premise]\nHypothesis: [Hypothesis]\nLabel: [Label].\n\n"
@@ -132,67 +78,21 @@ def mark_keywords_in_prompt(prompt, keywords):
         prompt = re.sub(rf'\b{re.escape(keyword)}\b', rf'[{keyword}]', prompt, flags=re.IGNORECASE)
     return prompt
 
-# Works for full prompt, just leaves parts untranslated
-def generate_prompts(row, translated_instruction, language="english"):
+def generate_prompts(row, instruction):
     """
     Generates a single prompt by replacing placeholders with specific row data.
-    Ensures that premise, hypothesis, and label are correctly populated.
+    Ensures that english premise, hypothesis, and label are correctly populated.
     """
-    # Replace placeholders with actual premise, hypothesis, and label
-    premise = row["translated_premise"] if language != "english" else row["premise"]
-    hypothesis = row["translated_hypothesis"] if language != "english" else row["hypothesis"]
-
-    label = LABEL_MAP[row["label"]]
-    if language != "english":
-        label = translate_label(label, language)
-    
-    premise = premise.lower()
-    hypothesis = hypothesis.lower()
-
     # Replace placeholders in the instruction
-    prompt = translated_instruction.replace("[Premise]", premise)
-    prompt = prompt.replace("[Hypothesis]", hypothesis)
-    prompt = prompt.replace("[Label]", label)
-
-    # Make sure that placeholders in the instruction are resolved, even if they are translated (i.e., "[Premere]", "[Hypothese]", etc.)
-    if language != "english":
-        for component in PROMPT_COMPONENTS[language]:
-            placeholder = f"[{PROMPT_COMPONENTS[language][component]}]"
-            if placeholder in prompt:
-                if component == "Premise":
-                    prompt = prompt.replace(placeholder, premise)
-                elif component == "Hypothesis":
-                    prompt = prompt.replace(placeholder, hypothesis)
-                elif component == "Label":
-                    prompt = prompt.replace(placeholder, label)
+    prompt = instruction.replace("[Premise]", row["premise"].lower())
+    prompt = prompt.replace("[Hypothesis]", row["hypothesis"].lower())
+    prompt = prompt.replace("[Label]", LABEL_MAP[row["label"]] )
 
     # Check for unresolved English placeholders
     if "[Premise]" in prompt or "[Hypothesis]" in prompt or "[Label]" in prompt:
         raise ValueError(f"Unresolved placeholders in prompt: {prompt}")
-    
-    # Check for unresolved Translated placeholders
-    if f"[{PROMPT_COMPONENTS[language]["Premise"]}]" in prompt or f"[{PROMPT_COMPONENTS[language]["Hypothesis"]}]" in prompt or f"[{PROMPT_COMPONENTS[language]["Label"]}]" in prompt:
-        raise ValueError(f"Unresolved placeholders in prompt: {prompt}")
-
-    print(f"\n\npost-replacement prompt: {prompt}\n\n")
 
     return prompt
-
-def filter_keywords(keywords, premise, hypothesis, language="english"):
-    """
-    Filter out any keywords that are not in the premise or hypothesis.
-    Also accounts for multi-word translations and compound words.
-    """
-    allowed_words = set(premise.split() + hypothesis.split())
-    filtered_keywords = []
-
-    for keyword in keywords:
-        if keyword in allowed_words:
-            filtered_keywords.append(keyword)
-        elif compare_with_components(keyword, allowed_words, language):
-            filtered_keywords.append(keyword)
-
-    return filtered_keywords
 
 def enforce_limit(keywords, limit, premise, hypothesis):
     """Ensures that the keyword list meets the required limit by adding words from the premise or hypothesis if necessary."""
@@ -211,21 +111,18 @@ def get_common_keywords(all_keywords, limit):
     most_common_keywords = [keyword for keyword, _ in keyword_counts.most_common(limit)]
     return most_common_keywords
 
-def refine_prompt_for_o1_preview(prompt):
-    return f"Task: {prompt.strip()}\n\nOutput: Keywords: [\"a\", \"b\", \"c\", \"d\"]"
-
 def run_gpt(prompt, model_name):
-    """Runs GPT-based models using OpenAI API."""
-    is_o1_preview = "o1-preview" in model_name
-    if is_o1_preview:
-        prompt = refine_prompt_for_o1_preview(prompt)
+    max_tokens_param = "max_tokens"
 
-    max_tokens_param = "max_tokens" if not is_o1_preview else "max_completion_tokens"
+    # Adjust max_tokens to leave room for prompt
     request_params = {
         "model": model_name,
         "messages": [{"role": "user", "content": prompt}],
-        max_tokens_param: 50,
+        max_tokens_param: 500,  # Adjust based on model capabilities
     }
+
+    # print(f"@@@PROMPT MESSAGE@@@: {request_params}\n")
+
     response = openai.chat.completions.create(**request_params)
     return response.choices[0].message.content
 
@@ -249,7 +146,63 @@ def clean_keyword(keyword):
     keyword = ''.join(char for char in keyword if char not in string.punctuation)  # Remove punctuation
     return keyword.strip().lower()  # Strip whitespace and convert to lowercase
 
-def reverse_translate_keywords_deeptranslator(keywords, source_language):
+from difflib import SequenceMatcher
+
+def closest_match_keywords(word, english_premise, english_hypothesis, translated_premise, translated_hypothesis):
+    """
+    Compare a reverse-translated keyword to the English premise and hypothesis
+    to find the closest match, considering section (premise or hypothesis) and positional alignment.
+    :param word: The reverse-translated keyword.
+    :param source_language: The source language of the reverse translation.
+    :param english_premise: The original English premise.
+    :param english_hypothesis: The original English hypothesis.
+    :param translated_premise: The translated premise.
+    :param translated_hypothesis: The translated hypothesis.
+    :return: The closest matching word from the premise or hypothesis.
+    """
+    def similarity(a, b):
+        return SequenceMatcher(None, a, b).ratio()
+
+    # Tokenize sentences
+    premise_words = english_premise.lower().split()
+    hypothesis_words = english_hypothesis.lower().split()
+    translated_premise_words = translated_premise.lower().split()
+    translated_hypothesis_words = translated_hypothesis.lower().split()
+
+    # Check section: translated premise or hypothesis
+    if word in translated_premise_words:
+        section_words = premise_words
+        translated_section_words = translated_premise_words
+    elif word in translated_hypothesis_words:
+        section_words = hypothesis_words
+        translated_section_words = translated_hypothesis_words
+    else:
+        # If the word cannot be found, treat it as belonging to both
+        section_words = premise_words + hypothesis_words
+        translated_section_words = translated_premise_words + translated_hypothesis_words
+
+    # Step 1: Direct Match
+    if word in section_words:
+        return word
+
+    # Step 2: Semantic Similarity
+    semantic_scores = [(w, similarity(word, w)) for w in section_words]
+    best_match, best_score = max(semantic_scores, key=lambda x: x[1])
+
+    # If score is high enough, return the best semantic match
+    if best_score > 0.8:
+        return best_match
+
+    # Step 3: Positional Heuristic (when semantic similarity isn't decisive)
+    if word in translated_section_words:
+        word_index = translated_section_words.index(word)
+        closest_index = min(range(len(section_words)), key=lambda i: abs(i - word_index))
+        return section_words[closest_index]
+
+    # Fallback: Return the closest match by semantic similarity
+    return best_match
+
+def reverse_translate_keywords_deeptranslator(keywords, source_language, english_premise, english_hypothesis, translated_premise, translated_hypothesis):
     """Translates keywords back to English using deep-translator's Google Translator, preserving order."""
     source_code = LANGUAGE_CODES.get(source_language)
     if not source_code:
@@ -258,16 +211,36 @@ def reverse_translate_keywords_deeptranslator(keywords, source_language):
     reverse_translated_keywords = []
     for keyword in keywords:
         try:
-            if keyword in HARDCODE_TRANSLATIONS:
-                reverse_translated_keywords.append(HARDCODE_TRANSLATIONS[keyword])
-            else:
-                translated_word = GoogleTranslator(source=source_code, target="en").translate(keyword)
-                reverse_translated_keywords.append(clean_keyword(translated_word))
+            translated_word = GoogleTranslator(source=source_code, target="en").translate(keyword)
+            translated_word = clean_keyword(translated_word)
+
+            # Compare to words in source premise/hypothesis
+            closest_match = closest_match_keywords(
+                translated_word, 
+                english_premise, 
+                english_hypothesis, 
+                translated_premise, 
+                translated_hypothesis
+            )
+
+            reverse_translated_keywords.append(closest_match)
         except Exception as e:
             print(f"Error translating '{keyword}': {e}")
             reverse_translated_keywords.append(clean_keyword(keyword))
 
     return reverse_translated_keywords  # Order is preserved
+
+def split_and_translate(text, translator, max_length=500):
+    """
+    Splits a long text into smaller chunks for translation and translates each chunk.
+    """
+    if len(text) <= max_length:
+        return translator(text)[0]["translation_text"]
+
+    # Split text into manageable parts
+    chunks = [text[i:i + max_length] for i in range(0, len(text), max_length)]
+    translated_chunks = [translator(chunk)[0]["translation_text"] for chunk in chunks]
+    return " ".join(translated_chunks)
 
 def parse_keywords_from_response(response_text, premise, hypothesis):
     """
@@ -304,10 +277,10 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
     for idx, prompt in enumerate(prompts):
         all_run_keywords = []
 
-        # Translate the prompt if necessary
-        translated_prompt = translator(prompt)[0]["translation_text"] if translator else prompt
+        # # Translate the prompt if necessary
+        # translated_prompt = translator(prompt)[0]["translation_text"] if translator else prompt
 
-        # Translate premise and hypothesis for validation
+        # # Translate premise and hypothesis for validation
         premise, hypothesis = premise_hypothesis_pairs[idx][:2]
         translated_premise = translator(premise)[0]["translation_text"] if translator else premise
         translated_hypothesis = translator(hypothesis)[0]["translation_text"] if translator else hypothesis
@@ -316,10 +289,10 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
         for run in range(x):
             model_type = determine_model_type(model_name)
             if model_type == "gpt":
-                response_text = run_gpt(translated_prompt, model_name)
+                response_text = run_gpt(prompt, model_name)
             elif model_type == "llama":
                 # Assuming label is embedded in the prompt
-                response_text = run_llama(translated_prompt, model_name, premise_hypothesis_pairs[idx][2])
+                response_text = run_llama(prompt, model_name, premise_hypothesis_pairs[idx][2])
 
             # Parse and validate keywords from the response
             keywords = parse_keywords_from_response(response_text, translated_premise, translated_hypothesis)
@@ -336,7 +309,7 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
 
         # Reverse translate keywords back to English if language is not English
         if language_name != "english":
-            reverse_translated_keywords = reverse_translate_keywords_deeptranslator(common_keywords, language_name)
+            reverse_translated_keywords = reverse_translate_keywords_deeptranslator(common_keywords, language_name, premise, hypothesis, translated_premise, translated_hypothesis)
             reverse_translations_batch.append(reverse_translated_keywords)
         else:
             reverse_translations_batch.append(common_keywords)
@@ -353,7 +326,7 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
 
     # Generate raw English prompts and premise-hypothesis pairs
     english_instruction = translate_static_prompt_parts(None, limit)
-    english_prompts = [generate_prompts(row, english_instruction, "english") for row in dataset]
+    english_prompts = [generate_prompts(row, english_instruction) for row in dataset]
     premise_hypothesis_pairs = [(row["premise"], row["hypothesis"], LABEL_MAP[row["label"]]) for row in dataset]
 
     # Extract keywords for raw English prompts
@@ -402,8 +375,7 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
     for language in languages:
         translator = get_translator(language)
         translated_prompts_marked = [
-            translator(marked_prompt)[0]["translation_text"]
-            for marked_prompt in marked_english_prompts
+            split_and_translate(marked_prompt, translator) for marked_prompt in marked_english_prompts
         ]
 
         # Log translated marked prompts
@@ -412,8 +384,7 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
             print(f"Prompt {idx} (Marked): {translated_prompt}\n")
 
         translated_prompts_unmarked = [
-            translator(unmarked_prompt)[0]["translation_text"]
-            for unmarked_prompt in english_prompts
+            split_and_translate(unmarked_prompt, translator) for unmarked_prompt in english_prompts
         ]
 
         print(f"\nQueried {language.capitalize()} Prompts:")
@@ -429,6 +400,10 @@ def main(languages, limit, model_name, subset=20, repeats=5, output_file=None):
         for idx, (translated_keywords, reverse_translated) in enumerate(zip(translated_keywords_batch, reverse_translations_batch)):
             output_data["results"][idx][language] = translated_keywords
             output_data["results"][idx]["prompts"][language] = translated_prompts_unmarked[idx]
+            output_data["results"][idx]["translations"][language] = {
+                    "premise": translator(dataset[idx]["premise"])[0]["translation_text"],
+                    "hypothesis": translator(dataset[idx]["hypothesis"])[0]["translation_text"],
+                }
             if language != "english":
                 output_data["results"][idx][f"{language}-to-english"] = reverse_translated
 
