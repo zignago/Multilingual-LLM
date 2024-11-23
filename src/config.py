@@ -9,8 +9,6 @@ LABEL_MAP = {
 # Info on LLAMA models: https://docs.llama-api.com/quickstart
 SUPPORTED_LLM_MODELS = {
     "gpt": [
-        "o1-preview",
-        "o1-mini",
         "gpt-4o",
         "gpt-4o-2024-08-06",
         "gpt-4o-2024-05-13",
@@ -47,10 +45,9 @@ SUPPORTED_LLM_MODELS = {
         "Nous-Hermes-2-Mixtral-8x7B-DPO",
     ],
     "gemini": [
-        "gemini-1.5-flash",
+        "gemini-1.5-pro",
         "gemini-1.5-flash-8b",
-        "gemini-1.5-pro"
-
+        "gemini-1.5-flash"
     ]
 }
 
@@ -72,7 +69,7 @@ LANGUAGE_CODES = {
     'catalan': 'ca',
     'cebuano': 'ceb',
     'chichewa': 'ny',
-    'chinese': 'zh', # (simplified)
+    'chinese': 'zh-CN', # (simplified)
     'chinese (traditional)': 'zh-TW',
     'corsican': 'co',
     'croatian': 'hr',
@@ -95,7 +92,7 @@ LANGUAGE_CODES = {
     'greek': 'el',
     'guarani': 'gn',
     'gujarati': 'gu',
-    'haitian creole': 'ht',
+    'haitian': 'ht',
     'hausa': 'ha',
     'hawaiian': 'haw',
     'hebrew': 'iw',
@@ -115,7 +112,7 @@ LANGUAGE_CODES = {
     'khmer': 'km',
     'kinyarwanda': 'rw',
     'konkani': 'gom',
-    'korean': 'ko',
+    # 'korean': 'ko', 
     'krio': 'kri',
     'kurdish (kurmanji)': 'ku',
     'kurdish (sorani)': 'ckb',
@@ -198,7 +195,7 @@ TRANSLATION_MODELS = {
     'bambara': None,
     'basque': 'Helsinki-NLP/opus-mt-en-eu',
     'belarusian': None,
-    'bengali': 'shhossain/opus-mt-en-to-bn', #TESTING
+    'bengali': 'shhossain/opus-mt-en-to-bn',
     'bhojpuri': None,
     'bosnian': None,
     'bulgarian': 'Helsinki-NLP/opus-mt-tc-big-en-bg',
@@ -228,9 +225,9 @@ TRANSLATION_MODELS = {
     'greek': 'Helsinki-NLP/opus-mt-tc-big-en-el',
     'guarani': None,
     'gujarati': None,
-    'haitian creole': 'Helsinki-NLP/opus-mt-en-ht',
+    'haitian': 'Helsinki-NLP/opus-mt-en-ht', #haitian creole
     'hausa': 'Helsinki-NLP/opus-mt-en-ha',
-    'hebrew': 'Helsinki-NLP/opus-mt-en-he', #TEST
+    'hebrew': 'Helsinki-NLP/opus-mt-en-he',
     'hindi': 'Helsinki-NLP/opus-mt-en-hi',
     'hmong': None,
     'hungarian': 'Helsinki-NLP/opus-mt-tc-big-en-hu',
@@ -247,7 +244,7 @@ TRANSLATION_MODELS = {
     'khmer': 'Helsinki-NLP/opus-mt-en-mkh',
     'kinyarwanda': 'Helsinki-NLP/opus-mt-en-rw',
     'konkani': None,
-    'korean': 'Helsinki-NLP/opus-mt-tc-big-en-ko',
+    # 'korean': 'Helsinki-NLP/opus-mt-tc-big-en-ko',
     'krio': None,
     'kurdish (kurmanji)': None,
     'kurdish (sorani)': None,

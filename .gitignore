@@ -18,3 +18,5 @@ venv.bak/
 *.spec
 *.log
 *.sqlite3
+*.bash
+*.ps1

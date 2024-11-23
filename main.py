@@ -9,7 +9,7 @@ def output_handler(iou_results, rank_results, keywords_json_path, model):
 
     # Generate timestamp and output directory
     timestamp = time.strftime("%m-%d_%H-%M-%S")
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"outputs\{timestamp}_{model}")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"outputs/{timestamp}_{model}")
     os.makedirs(output_dir, exist_ok=True)
 
     # Save IoU results to JSON

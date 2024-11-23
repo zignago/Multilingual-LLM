@@ -50,7 +50,7 @@ def get_translator(language):
     # Return the translation pipeline
     return pipeline("translation", model=TRANSLATION_MODELS[language], device=device, batch_size=8)
 
-def translate_static_prompt_parts(translator, limit, language="english"):
+def translate_static_prompt_parts(translator, limit):
     """
     Translates only the static instruction parts of the prompt for a given language.
     Uses hardcoded translations for premise, hypothesis, and label to avoid errors.
@@ -208,6 +208,12 @@ def closest_match_keywords(word, english_premise, english_hypothesis, translated
     # Fallback: Return the closest match by semantic similarity
     return best_match
 
+def preprocess_chinese_text(text):
+    """
+    Adds a space between each character in the text for Chinese language.
+    """
+    return ' '.join(list(text)) if text else text
+
 def reverse_translate_keywords_deeptranslator(keywords, source_language, english_premise, english_hypothesis, translated_premise, translated_hypothesis):
     """Translates keywords back to English using deep-translator's Google Translator, preserving order."""
     source_code = LANGUAGE_CODES.get(source_language)
@@ -216,6 +222,11 @@ def reverse_translate_keywords_deeptranslator(keywords, source_language, english
 
     reverse_translated_keywords = []
     for keyword in keywords:
+        # Catch non-string keywords (rare but prevents reverse translation)
+        if not isinstance(keyword, str):
+            print(f"Skipping non-string keyword: {keyword}")
+            continue
+
         try:
             translated_word = GoogleTranslator(source=source_code, target="en").translate(keyword)
             translated_word = clean_keyword(translated_word)
@@ -285,8 +296,13 @@ def get_keywords_with_reverse_translation(prompts, model_name, limit, premise_hy
 
         # # Translate premise and hypothesis for validation
         premise, hypothesis = premise_hypothesis_pairs[idx][:2]
+
         translated_premise = translator(premise)[0]["translation_text"] if translator else premise
         translated_hypothesis = translator(hypothesis)[0]["translation_text"] if translator else hypothesis
+
+        if language_name == "chinese":
+            translated_premise = preprocess_chinese_text(translated_premise)
+            translated_hypothesis = preprocess_chinese_text(translated_hypothesis)
 
         # Run the keyword extraction 'x' times
         for run in range(x):
